@@ -318,8 +318,12 @@ def create_app() -> FastAPI:
                               "plane mutations are enabled"},
                     status_code=503,
                 )
-            supplied = request.headers.get("x-dashboard-token")
-            if supplied != dash_token:
+            # Constant-time compare so a bad token can't be recovered by timing
+            # the 401. compare_digest needs equal-length byte strings of the
+            # same type; a missing header collapses to "" and fails safely.
+            import hmac
+            supplied = request.headers.get("x-dashboard-token") or ""
+            if not hmac.compare_digest(supplied, dash_token):
                 return JSONResponse(
                     {"error": "unauthorized: missing or bad X-Dashboard-Token"},
                     status_code=401,

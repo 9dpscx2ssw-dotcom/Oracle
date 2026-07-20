@@ -42,6 +42,24 @@ log = logging.getLogger(__name__)
 # "nothing pending" and the dashboard's Close-All button silently does nothing.
 CLOSE_ALL = "__ALL__"
 
+# Below this recent take-rate the gating policy has likely collapsed to the
+# all-skip equilibrium; at/under it the gate FAILS OPEN (takes the signal)
+# rather than letting a degenerate learner silently veto live trading.
+RL_MIN_TAKE_FLOOR = 0.05
+
+
+def _rl_gate_healthy(recent_take_rate: float | None, diverged: bool) -> bool:
+    """Is the RL policy trustworthy enough to VETO a signal right now?
+
+    Unhealthy = collapsed to (near) all-skip, or the convergence monitor
+    flagged divergence. An unhealthy policy still learns, but it must not be
+    allowed to block live flow — the gate fails open. ``None`` take-rate means
+    not enough recent decisions to judge (e.g. warmup) → treated as healthy,
+    since the policy itself takes everything during warmup anyway.
+    """
+    take_rate_ok = recent_take_rate is None or recent_take_rate >= RL_MIN_TAKE_FLOOR
+    return take_rate_ok and not diverged
+
 
 class Agent:
     def __init__(
@@ -176,6 +194,9 @@ class Agent:
         # Bounded mark-to-market diagnostics for non-executed consensus.
         self._consensus_counterfactuals: dict[str, list[dict]] = {}
         self._rl_alarm_ts: float = 0.0   # throttle for the RL collapse warning
+        # Set by the slow-loop convergence monitor; when true the RL gate fails
+        # open so a diverged policy can't act as a silent live-execution veto.
+        self._rl_diverged: bool = False
         # Loss-streak cooldown: bench a strategy on a symbol after N straight
         # losing round-trips there (the counter-trend re-entry loop).
         from ..risk.cooldown import LossStreakGuard
@@ -1646,7 +1667,19 @@ class Agent:
                             "rl-collapse",
                             f"RL gate is skipping {round((1 - rate) * 100)}% of recent "
                             "signals — policy has likely collapsed to all-skip.")
-                    take = decision.take if self._rl_gate else True
+                    # Fail open when the policy is unhealthy: a collapsed
+                    # (all-skip) or diverged learner must not veto live flow.
+                    # It still learns (decision is stamped/graded); it just
+                    # can't block while it is untrustworthy.
+                    gate_healthy = _rl_gate_healthy(rate, self._rl_diverged)
+                    take = decision.take if (self._rl_gate and gate_healthy) else True
+                    # Would have skipped, but the unhealthy policy was overridden:
+                    # record the bypass on the live path for the audit trail.
+                    if (self._rl_gate and not gate_healthy and not decision.take
+                            and go_live):
+                        self.audit.record("rl_gate_bypassed_live", symbol=symbol,
+                                          strategy=strat.name,
+                                          take_rate=rate, diverged=self._rl_diverged)
                     if not take:
                         # Skipped — fill it learning-only so the policy can later be
                         # graded on the PnL it avoided, then move on.
@@ -1814,8 +1847,12 @@ class Agent:
         if self.rl and self._convergence_monitor:
             self._convergence_monitor.record(self.rl.snapshot())
             is_diverging, reason = self._convergence_monitor.check_divergence()
+            # Latch the health flag so the fast-loop gate fails open until the
+            # policy recovers (or an operator resets it). A diverged learner
+            # must never be able to silently block live signals.
+            self._rl_diverged = bool(is_diverging)
             if is_diverging:
-                log.warning("RL DIVERGENCE: %s", reason)
+                log.warning("RL DIVERGENCE: %s — RL gate will fail open until recovery", reason)
                 self.alerter.send("rl_divergence", f"RL divergence: {reason}", critical=False)
         # Demote strategies with a sustained, well-sampled negative edge so they
         # stop polluting the live account / shadow stream (audit F-16).

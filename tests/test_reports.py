@@ -28,6 +28,16 @@ class _FakeJournal:
     def closed(self, limit=100):
         return self._t[:limit]
 
+    def recent(self, strategy=None, mode=None, limit=100):
+        # Mirrors Journal.recent: recent trades (closed or provisional), with
+        # the same optional strategy/mode filters reports.build() relies on.
+        out = self._t
+        if strategy is not None:
+            out = [t for t in out if t.strategy == strategy]
+        if mode is not None:
+            out = [t for t in out if t.mode == mode]
+        return out[:limit]
+
 
 def test_window_aggregates_by_group():
     now = datetime.now(timezone.utc)

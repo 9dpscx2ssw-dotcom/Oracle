@@ -32,8 +32,11 @@ Consequences worth knowing:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 from ..data.models import Order, Side, Trade
@@ -57,9 +60,17 @@ class NettingBroker(Broker):
 
     def __init__(self, account: Broker, cost=None, order_vet: OrderVet | None = None,
                  catastrophe_stop_mult: float = 1.5,
-                 catastrophe_stop_pct: float = 0.05):
+                 catastrophe_stop_pct: float = 0.05,
+                 virtual_books_path: str | None = "data/virtual_books.json"):
         self.account = account
         self.virtual = PaperBroker(cost=cost)
+        # Per-strategy virtual books carry the real (tight) brackets the agent
+        # manages exits on. Persist them so a restart doesn't lose them: without
+        # this, after a restart the virtual books are empty, _manage_exits has
+        # nothing to act on, and the live net position rides on only its wide
+        # catastrophe stop until strategies happen to re-emit.
+        self._vbooks_path = Path(virtual_books_path) if virtual_books_path else None
+        self._load_virtual()
         self._order_vet = order_vet
         self._dirty: set[str] = set()
         self._last_price: dict[str, float] = {}
@@ -76,6 +87,50 @@ class NettingBroker(Broker):
         # platform). Handed to the agent via drain_closed() for grading.
         self._pending_drained: list[Trade] = []
         self._blocked: dict[str, str] = {}
+
+    # ── virtual-book persistence (restart survivability) ─────────────────────
+    def _load_virtual(self) -> None:
+        if self._vbooks_path is None:
+            return
+        try:
+            if self._vbooks_path.exists():
+                for rec in json.loads(self._vbooks_path.read_text()) or []:
+                    kw = {}
+                    if rec.get("opened_at"):
+                        try:
+                            kw["opened_at"] = datetime.fromisoformat(rec["opened_at"])
+                        except ValueError:
+                            pass
+                    strat = rec.get("strategy", "")
+                    self.virtual._positions[(rec["symbol"], strat)] = Trade(
+                        symbol=rec["symbol"], side=Side(rec["side"]),
+                        volume=rec["volume"], entry_price=rec.get("entry_price", 0.0),
+                        strategy=strat, mode=rec.get("mode", "shadow"),
+                        context=rec.get("context", {}), **kw)
+                if self.virtual._positions:
+                    log.warning("Rehydrated %d virtual strategy book(s) from %s "
+                                "across a restart", len(self.virtual._positions),
+                                self._vbooks_path)
+        except (OSError, ValueError, KeyError) as e:
+            log.warning("Virtual-book ledger unreadable (%s); starting empty", e)
+
+    def _save_virtual(self) -> None:
+        if self._vbooks_path is None:
+            return
+        try:
+            recs = [
+                {"symbol": sym, "strategy": strat, "side": t.side.value,
+                 "volume": t.volume, "entry_price": t.entry_price, "mode": t.mode,
+                 "opened_at": t.opened_at.isoformat() if t.opened_at else None,
+                 "context": t.context or {}}
+                for (sym, strat), t in self.virtual._positions.items()
+            ]
+            self._vbooks_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._vbooks_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(recs))
+            tmp.replace(self._vbooks_path)
+        except OSError as e:
+            log.warning("Virtual-book ledger save failed: %s", e)
 
     def block_symbol(self, symbol: str, reason: str) -> None:
         self._blocked[symbol] = reason
@@ -102,6 +157,7 @@ class NettingBroker(Broker):
         self.account.reset()
         self._dirty.clear()
         self._pending_drained.clear()
+        self._save_virtual()   # persist the now-empty books
 
     # ── the agent's view: per-strategy virtual positions ─────────────────────
 
@@ -148,12 +204,14 @@ class NettingBroker(Broker):
         trade = await self.virtual.submit(order)
         if trade is not None:
             self._dirty.add(order.symbol)
+            self._save_virtual()
         return trade
 
     async def close(self, symbol: str, strategy: str | None = None) -> Trade | None:
         closed = await self.virtual.close(symbol, strategy)
         if closed is not None:
             self._dirty.add(symbol)
+            self._save_virtual()
             return closed
         # No virtual book matched — an adopted/manual account deal (surfaced by
         # open_positions) can still be closed directly. Never the net position:
@@ -172,6 +230,8 @@ class NettingBroker(Broker):
             if closed is not None:
                 closed.context = {**(closed.context or {}), "close_reason": reason}
                 out.append(closed)
+        if out:
+            self._save_virtual()
         return out
 
     # ── account reconciliation ───────────────────────────────────────────────

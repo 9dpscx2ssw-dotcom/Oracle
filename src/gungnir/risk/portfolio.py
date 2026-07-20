@@ -12,8 +12,10 @@ Owns account-wide limits and can veto or shrink any order:
     the breakers stared at an untouched account (the 16h incident).
 
 These bind on the live `open_exposure` map, which the agent refreshes from broker
-positions each loop. (A correlation/cluster cap is intentionally not implemented
-yet — do not assume one exists.)
+positions each loop. A coarse correlation/cluster cap (by market-type bucket,
+FX split by the non-USD leg) caps total notional per correlated group; it
+defaults to the gross cap (non-binding) until tightened in config. A rolling
+correlation-matrix version is future work.
 
 This is intentionally conservative: when in doubt, size down or skip.
 """
@@ -112,10 +114,34 @@ def _get_market_type(symbol: str) -> str:
     return "stocks"
 
 
+def _cluster_of(symbol: str) -> str:
+    """Correlation cluster a symbol belongs to, for the concentration cap.
+
+    A per-asset cap can't see that eight US single-names plus the US indices
+    are, in a risk-off move, one correlated bet. Clustering by market type is a
+    coarse but robust v1 (equities co-move, FX majors co-move via USD, crypto
+    co-moves); a rolling-correlation upgrade is future work. FX is split by the
+    non-USD leg so EURUSD and EURGBP share a bucket but USDJPY doesn't pile in.
+    """
+    mt = _get_market_type(symbol)
+    if mt == "forex":
+        s = symbol.upper()
+        legs = [s[:3], s[3:]]
+        non_usd = next((leg for leg in legs if leg != "USD"), "USD")
+        return f"fx_{non_usd.lower()}"
+    return mt
+
+
 class PortfolioRisk:
     def __init__(self, config: Config):
         self.max_gross = config.get("risk", "max_portfolio_exposure", default=2.0)
         self.max_per_asset = config.get("risk", "max_per_asset_exposure", default=0.5)
+        # Correlation/cluster cap: total notional per correlation bucket (see
+        # _cluster_of) as a multiple of equity. Defaults to the gross cap, so it
+        # is present-but-non-binding out of the box (a bucket can never exceed
+        # gross anyway); tighten it in config to stop correlated concentration —
+        # e.g. all US single-names becoming one leveraged bet.
+        self.max_cluster = config.get("risk", "max_cluster_exposure", default=self.max_gross)
         self.max_positions = config.get("risk", "max_open_positions", default=5)
         self.max_daily_dd = config.get("risk", "max_daily_drawdown", default=0.03)
         self.min_confidence = config.get("risk", "min_confidence", default=0.3)
@@ -341,6 +367,18 @@ class PortfolioRisk:
         gross_cap = self.max_gross * equity
         if gross + notional > gross_cap:
             notional = max(0.0, gross_cap - gross)
+
+        # Correlation/cluster cap: total notional across this symbol's bucket
+        # (its own existing exposure included) can't exceed max_cluster×equity.
+        # Catches concentration the per-asset cap is blind to.
+        if self.max_cluster:
+            cluster = _cluster_of(signal.symbol)
+            cluster_existing = sum(
+                abs(v) for s, v in self.open_exposure.items()
+                if _cluster_of(s) == cluster)
+            cluster_cap = self.max_cluster * equity
+            if cluster_existing + notional > cluster_cap:
+                notional = max(0.0, cluster_cap - cluster_existing)
 
         if notional <= 0:
             return None

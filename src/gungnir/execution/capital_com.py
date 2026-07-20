@@ -36,9 +36,17 @@ _INTENT_VOL_TOL = 0.01
 
 
 class CapitalComBroker(Broker):
-    def __init__(self, session: CapitalComSession):
+    def __init__(self, session: CapitalComSession,
+                 positions_path: str = "data/live_positions.json"):
         self.session = session
-        self._positions: dict[str, Trade] = {}      # dealId → our Trade
+        # dealId → our Trade. Durably persisted (below): a restart used to start
+        # with an empty map, so pre-existing net deals were re-ADOPTED every
+        # loop with a blank strategy tag — _net_current then read the live net
+        # as flat and the agent stopped managing their exits (only the
+        # catastrophe stop remained). The ledger rehydrates them with their real
+        # strategy/__net__ tag so netting and agent-managed exits survive.
+        self._positions_path = Path(positions_path)
+        self._positions: dict[str, Trade] = self._load_positions()
         self._last_price: dict[str, float] = {}
         self._closed_externally: list[Trade] = []   # drained by the agent
         # Last successfully fetched account numbers. Served when a fetch fails:
@@ -100,6 +108,51 @@ class CapitalComBroker(Broker):
     def position_count(self) -> int:
         return len(self._positions)
 
+    # ── durable position ledger (restart survivability) ──────────────────────
+    @staticmethod
+    def _serialize_trade(t: Trade) -> dict:
+        return {
+            "symbol": t.symbol, "side": t.side.value, "volume": t.volume,
+            "entry_price": t.entry_price, "strategy": t.strategy, "mode": t.mode,
+            "opened_at": t.opened_at.isoformat() if t.opened_at else None,
+            "context": t.context or {},
+        }
+
+    def _load_positions(self) -> dict[str, Trade]:
+        try:
+            if self._positions_path.exists():
+                data = json.loads(self._positions_path.read_text())
+                out: dict[str, Trade] = {}
+                for deal_id, rec in (data or {}).items():
+                    kw = {}
+                    if rec.get("opened_at"):
+                        try:
+                            kw["opened_at"] = datetime.fromisoformat(rec["opened_at"])
+                        except ValueError:
+                            pass
+                    out[deal_id] = Trade(
+                        symbol=rec["symbol"], side=Side(rec["side"]),
+                        volume=rec["volume"], entry_price=rec.get("entry_price", 0.0),
+                        strategy=rec.get("strategy", ""), mode=rec.get("mode", "real"),
+                        context=rec.get("context", {}), **kw)
+                if out:
+                    log.warning("Rehydrated %d live position(s) from %s across a "
+                                "restart", len(out), self._positions_path)
+                return out
+        except (OSError, ValueError, KeyError) as e:
+            log.warning("Live-position ledger unreadable (%s); starting empty", e)
+        return {}
+
+    def _save_positions(self) -> None:
+        try:
+            self._positions_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._positions_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(
+                {d: self._serialize_trade(t) for d, t in self._positions.items()}))
+            tmp.replace(self._positions_path)
+        except OSError as e:
+            log.warning("Live-position ledger save failed: %s", e)
+
     def drain_closed(self) -> list[Trade]:
         out, self._closed_externally = self._closed_externally, []
         return out
@@ -138,6 +191,7 @@ class CapitalComBroker(Broker):
             # that timed out after acceptance is OUR order — restore its
             # strategy tag (a recovered __net__ deal stays nettable) instead of
             # adopting it as permanent unmanaged exposure.
+            changed = False
             for deal_id, row in fetched.items():
                 pos, symbol = row["pos"], row["symbol"]
                 known = self._positions.get(deal_id)
@@ -168,6 +222,7 @@ class CapitalComBroker(Broker):
                     strategy=(intent or {}).get("strategy", ""),
                     context=ctx,
                 )
+                changed = True
 
             # Tracked deals missing from the broker were closed broker-side
             # (stop/TP) — finalize them and queue for the agent to grade,
@@ -180,7 +235,10 @@ class CapitalComBroker(Broker):
                     self._closed_externally.append(self._finalize(trade, exit_px))
                     log.info("Position %s (deal %s) closed broker-side; queued for grading",
                              trade.symbol, deal_id)
+                    changed = True
 
+            if changed:
+                self._save_positions()
             return list(self._positions.values())
         except Exception as e:  # noqa: BLE001
             log.error("Failed to fetch positions: %s", e)
@@ -339,6 +397,7 @@ class CapitalComBroker(Broker):
                          **({"entry_estimated": True} if estimated or not fill else {})},
             )
             self._positions[deal_id] = trade
+            self._save_positions()
             self._clear_intent(intent)
             status = "confirmed" if confirmed else "submitted (unconfirmed)"
             log.info("Order %s: %s %s vol=%.4f @ %.5f (deal %s)", status, order.side.value,
@@ -361,6 +420,7 @@ class CapitalComBroker(Broker):
         try:
             res = await self.session.delete(f"/api/v1/positions/{deal_id}")
             self._positions.pop(deal_id, None)
+            self._save_positions()
             # Resolve the closing fill so the round-trip carries realized PnL.
             exit_px = None
             close_ref = None
