@@ -1,0 +1,1391 @@
+"""FastAPI app for the monitoring + control dashboard.
+
+Read endpoints serve the agent's published state (status.json + journal DB).
+Write endpoints (strategy mode, pause) go through the control file, which the
+agent applies on its next loop — the dashboard never touches agent memory.
+
+  GET  /api/overview               headline account + latest signal + perf
+  GET  /api/status                 raw live status snapshot
+  GET  /api/instruments            universe + per-symbol market views
+  GET  /api/intelligence           sentiment, predictions, macro, news
+  GET  /api/strategies             strategies + mode + metrics
+  POST /api/strategies/{name}/mode {"mode": "off|shadow|live"}
+  POST /api/pause                  {"paused": bool}
+  GET  /api/metrics                performance metrics overall + per strategy
+  GET  /api/learning               reflection / parameter-change history
+  GET  /api/signals                recent signals (real/shadow/rejected)
+  GET  /api/trades                 recent (closed) trades
+  GET  /api/equity                 realized equity curve
+  GET  /api/settings               sanitized config + control state
+  POST /api/backtest               run a backtest and return metrics + curve
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+from pathlib import Path
+
+from fastapi import Body, FastAPI
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from ..backtest import engine
+from ..config import Config
+from ..core.control import Control
+from ..learning.evaluator import evaluate
+from ..persistence.db import Database
+from ..strategy.registry import _REGISTRY
+
+_STATIC = Path(__file__).parent / "static"
+
+
+def _db_path() -> str:
+    return os.getenv("GUNGNIR_DB_PATH", "data/gungnir.db")
+
+
+def _status_path() -> str:
+    return os.getenv("GUNGNIR_STATUS_PATH", "data/status.json")
+
+
+def _config() -> Config:
+    return Config.load(os.getenv("GUNGNIR_CONFIG", "config/config.yaml"))
+
+
+def _control() -> Control:
+    cfg = _config()
+    path = os.getenv(
+        "GUNGNIR_CONTROL_PATH",
+        cfg.get("dashboard", "control_path", default="data/control.json"),
+    )
+    return Control(path)
+
+
+def _open_db() -> Database:
+    # A fresh connection per request keeps SQLite single-threaded-per-use, which
+    # is what the FastAPI threadpool needs. Cheap for a homelab's trade volume.
+    return Database(_db_path())
+
+
+def _json_safe(d: dict) -> dict:
+    """Replace non-finite floats (inf from a 0-loss profit factor, nan) with None."""
+    return {k: (None if isinstance(v, float) and not math.isfinite(v) else v) for k, v in d.items()}
+
+
+def _status() -> dict:
+    path = Path(_status_path())
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+# ── adapter helpers ──────────────────────────────────────────────────────────
+# The frontend (Odin console) speaks a specific JSON dialect. The agent writes a
+# flatter status.json on its own schedule; these helpers translate the agent's
+# state + journal into the exact shapes the UI binds to, so the dashboard stays a
+# pure read/transform layer over the data the agent already publishes.
+
+def _strategy_numbers() -> dict[str, int]:
+    """Stable 1-based number per strategy, by registry order. Used everywhere the
+    UI shows 'S{n}' so a strategy keeps the same id across all tabs."""
+    return {name: i + 1 for i, name in enumerate(_REGISTRY.keys())}
+
+
+def _strategy_indicators(name: str) -> str:
+    """One-line description from the strategy class docstring (drops the 'S1:' tag)."""
+    import re
+    cls = _REGISTRY.get(name)
+    lines = (cls.__doc__ or "").strip().splitlines() if cls else []
+    doc = lines[0].strip() if lines else ""
+    return re.sub(r"^S\d+:\s*", "", doc) or name
+
+
+def _dir(side: str | None) -> str:
+    return {"buy": "BUY", "sell": "SELL", "flat": "HOLD"}.get((side or "").lower(), "HOLD")
+
+
+_CATEGORIES = {
+    "Indices": {"US100", "US500", "US30", "RTY", "J225", "DE40", "UK100", "HK50",
+                "NAS100", "SPX500", "DJI30"},
+    "Commodities": {"GOLD", "XAUUSD", "SILVER", "XAGUSD", "OIL", "WTI", "BRENT", "NATGAS"},
+    "Crypto": {"BTCUSD", "ETHUSD", "XRPUSD", "SOLUSD", "DOGEUSD", "ADAUSD", "LTCUSD", "XBTUSD"},
+}
+
+
+def _category(symbol: str) -> str:
+    for cat, members in _CATEGORIES.items():
+        if symbol in members:
+            return cat
+    return "FX"      # everything else is treated as a currency pair
+
+
+def _signal_aggregates(db: Database) -> dict[str, dict]:
+    """Average conviction + count per strategy name, from the signals log."""
+    agg: dict[str, dict] = {}
+    for s in db.recent_signals(limit=3000):
+        a = agg.setdefault(s.get("strategy") or "", {"sum": 0.0, "n": 0})
+        a["sum"] += float(s.get("conviction") or 0.0)
+        a["n"] += 1
+    return {k: {"avg_confidence": round(v["sum"] / v["n"] * 100, 1), "signals": v["n"]}
+            for k, v in agg.items() if v["n"]}
+
+
+def _backtest_candles(symbol: str, n_bars: int, timeframe: str = "1h"):
+    """Real Capital.com candles for backtests, with a synthetic fallback.
+
+    Returns (candles, source) where source is "capital.com" or "synthetic". Uses
+    the configured Capital.com credentials when present; on missing creds or any
+    fetch failure it falls back to a reproducible synthetic series so the endpoint
+    always works. The real path is untested without live creds — it is structured
+    defensively and never raises into the request.
+    """
+    pass  # logging imported at module level
+    log = logging.getLogger(__name__)
+    cfg = _config()
+    sec = cfg.secrets
+    if sec.capital_com_api_key and sec.capital_com_identifier and sec.capital_com_password:
+        try:
+            import asyncio
+
+            from ..data.capital_com_feed import CapitalComMarketFeed
+            from ..execution.capital_session import CapitalComSession
+
+            async def _fetch():
+                session = CapitalComSession(
+                    sec.capital_com_api_key, sec.capital_com_identifier,
+                    sec.capital_com_password, demo=sec.capital_com_demo,
+                    base_url=sec.capital_com_api_url or None,
+                )
+                feed = CapitalComMarketFeed(session, cfg)
+                await feed.connect()
+                return await feed.recent_candles(symbol, timeframe, n=n_bars)
+
+            candles = asyncio.run(_fetch())
+            if candles and len(candles) >= 80:        # enough to warm indicators
+                return candles, "capital.com"
+            log.warning("Capital.com returned %d candles for %s; using synthetic",
+                        len(candles or []), symbol)
+        except Exception as e:  # noqa: BLE001 — never fail the backtest on data fetch
+            log.warning("Capital.com candle fetch failed (%s); using synthetic", e)
+    return engine.synthetic_candles(symbol, n=n_bars, seed=42), "synthetic"
+
+
+# ── Prometheus telemetry proxy ───────────────────────────────────────────────
+# The agent exports Prometheus text on :9109/metrics (see core/metrics.py).
+# The dashboard proxies + reshapes it into the JSON the Trades tab's System
+# Telemetry card binds to, so the browser never needs to reach the agent
+# container directly. Pure functions, unit-tested against captured text.
+
+def _parse_prom_text(text: str) -> dict[str, list[tuple[dict, float]]]:
+    """Prometheus exposition text → {metric: [(labels, value), …]}."""
+    out: dict[str, list[tuple[dict, float]]] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            head, raw = line.rsplit(" ", 1)
+            value = float(raw)
+        except ValueError:
+            continue
+        labels: dict[str, str] = {}
+        name = head
+        if "{" in head:
+            name, rest = head.split("{", 1)
+            for pair in rest.rstrip("}").split(","):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    labels[k.strip()] = v.strip().strip('"')
+        out.setdefault(name, []).append((labels, value))
+    return out
+
+
+def _prom_labeled(metrics: dict, name: str, label: str) -> dict[str, float]:
+    return {ls.get(label, ""): v for ls, v in metrics.get(name, [])}
+
+
+def _prom_scalar(metrics: dict, name: str, default: float = 0.0) -> float:
+    rows = metrics.get(name, [])
+    return rows[0][1] if rows else default
+
+
+def _slippage_buckets(metrics: dict) -> list[dict]:
+    """De-cumulate the histogram's le-buckets into per-range counts."""
+    rows = []
+    for ls, v in metrics.get("gungnir_fill_slippage_bps_bucket", []):
+        le = ls.get("le", "")
+        rows.append((float("inf") if le == "+Inf" else float(le), v))
+    rows.sort(key=lambda r: r[0])
+    out, prev_le, prev_cum = [], None, 0.0
+    for le, cum in rows:
+        out.append({
+            "from": prev_le,
+            "to": None if le == float("inf") else le,
+            "n": max(0, int(cum - prev_cum)),
+        })
+        prev_le, prev_cum = (None if le == float("inf") else le), cum
+    return out
+
+
+def _telemetry_from(metrics: dict, status: dict) -> dict:
+    """Shape parsed metrics (+ status.json extras) for the telemetry card."""
+    trades = _prom_labeled(metrics, "gungnir_trades_closed_total", "mode")
+    pnl = _prom_labeled(metrics, "gungnir_realized_pnl", "mode")
+    cap = _prom_labeled(metrics, "gungnir_cap_saturation_total", "result")
+    slip_n = _prom_scalar(metrics, "gungnir_fill_slippage_bps_count")
+    slip_sum = _prom_scalar(metrics, "gungnir_fill_slippage_bps_sum")
+    rl = status.get("rl") or {}
+    return {
+        "loop": _prom_labeled(metrics, "gungnir_loop_seconds", "loop"),
+        "equity": _prom_labeled(metrics, "gungnir_equity", "book"),
+        "open_positions": int(_prom_scalar(metrics, "gungnir_open_positions")),
+        "halted": {k: bool(v) for k, v in
+                   _prom_labeled(metrics, "gungnir_halted", "book").items()},
+        "signals": {k: int(v) for k, v in
+                    _prom_labeled(metrics, "gungnir_signals_total",
+                                  "disposition").items()},
+        "trades": {m: {"n": int(n), "pnl": round(pnl.get(m, 0.0), 2)}
+                   for m, n in trades.items()},
+        "api_429": int(_prom_scalar(metrics, "gungnir_api_429_total")),
+        "ws": {"connected": bool(_prom_scalar(metrics, "gungnir_ws_connected")),
+               "quotes": int(_prom_scalar(metrics, "gungnir_ws_quotes_total"))},
+        "cap": {"capped": int(cap.get("capped", 0)),
+                "total": int(cap.get("capped", 0) + cap.get("full", 0))},
+        "slippage": {"buckets": _slippage_buckets(metrics),
+                     "n": int(slip_n),
+                     "mean": round(slip_sum / slip_n, 2) if slip_n else None},
+        "rl": {"brier": rl.get("brier"),
+               "take_rate": rl.get("recent_take_rate")},
+    }
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="Odin Dashboard", docs_url="/api/docs")
+
+    # ── control-plane auth (audit F-08) ──────────────────────────────────────
+    # The dashboard can flip PAPER/LIVE, promote strategies, and close real
+    # positions. When DASHBOARD_TOKEN is set, every state-changing request must
+    # carry it (X-Dashboard-Token header, or ?token= for bootstrap). Read-only
+    # GETs stay open. Unset token = open access (logged loudly at startup).
+    dash_token = os.getenv("DASHBOARD_TOKEN", "").strip()
+    if not dash_token:
+        logging.getLogger(__name__).warning(
+            "DASHBOARD_TOKEN is not set — the control plane (pause, live/paper "
+            "toggle, strategy promotion, closes) is UNAUTHENTICATED. Set it in "
+            ".env before exposing this port beyond localhost.")
+
+    @app.middleware("http")
+    async def _control_plane_auth(request, call_next):
+        if dash_token and request.method not in ("GET", "HEAD", "OPTIONS"):
+            supplied = (request.headers.get("x-dashboard-token")
+                        or request.query_params.get("token"))
+            if supplied != dash_token:
+                return JSONResponse({"error": "unauthorized: missing or bad "
+                                     "X-Dashboard-Token"}, status_code=401)
+        return await call_next(request)
+
+    # ── auth on the control plane ────────────────────────────────────────────
+    # The dashboard exposes write endpoints (flip live/paper, set risk, toggle
+    # strategies/agent). When DASHBOARD_TOKEN is set, every mutating request must
+    # carry it in the X-Dashboard-Token header. If unset, writes are allowed but a
+    # loud warning is logged — set a token (and/or front it with a reverse proxy)
+    # before exposing the dashboard beyond localhost.
+    _token = os.getenv("DASHBOARD_TOKEN", "")
+    if not _token:
+        pass  # logging imported at module level
+        logging.getLogger(__name__).warning(
+            "DASHBOARD_TOKEN not set — control endpoints are UNAUTHENTICATED. "
+            "Set DASHBOARD_TOKEN and keep the dashboard off public networks.")
+
+    @app.middleware("http")
+    async def _auth(request, call_next):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and _token:
+            if request.headers.get("X-Dashboard-Token") != _token:
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
+    # ── overview ─────────────────────────────────────────────────────────────
+
+    @app.get("/api/overview")
+    def overview() -> JSONResponse:
+        st = _status()
+        db = _open_db()
+        try:
+            metrics = evaluate(db.recent_trades(limit=1000))
+        finally:
+            db.close()
+        return JSONResponse({
+            "mode": st.get("mode", "unknown"),
+            "paused": st.get("paused", False),
+            "halted": st.get("halted", False),
+            "balance": st.get("balance", 0),
+            "equity": st.get("equity", 0),
+            "running_pl": st.get("running_pl", 0),
+            "closed_pl": st.get("closed_pl", 0),
+            "trade_counts": st.get("trade_counts", {"real": 0, "shadow": 0}),
+            "latest_signal": st.get("latest_signal"),
+            "strategy_performance": st.get("strategy_performance", []),
+            "metrics": _json_safe(metrics.model_dump()),
+            "ts": st.get("ts"),
+        })
+
+    @app.get("/api/status")
+    def status() -> JSONResponse:
+        st = _status()
+        if not st:
+            return JSONResponse({"note": "agent has not published status yet"})
+
+        nums = _strategy_numbers()
+        # Read the control file (the dashboard's desired state) so toggles reflect
+        # immediately, before the agent's next status publish catches up.
+        ctrl = _control().read()
+        ctrl_rs = ctrl.get("risk_settings", {})
+        paper = ctrl_rs.get("PAPER_TRADE", st.get("mode") != "live")
+        running = st.get("running_pl", 0) or 0
+        closed = st.get("closed_pl", 0) or 0
+        counts = st.get("trade_counts", {"real": 0, "shadow": 0})
+
+        # Open positions → the Trades tab's open-position rows.
+        open_trades = []
+        for i, p in enumerate(st.get("open_positions", []), start=1):
+            sh = (p.get("mode") in ("shadow", "learning"))
+            open_trades.append({
+                "id": i, "symbol": p.get("symbol"), "direction": _dir(p.get("side")),
+                "strategy": None, "size": p.get("volume"),
+                "entry": p.get("entry_price"), "current_price": p.get("entry_price"),
+                "running_pnl": p.get("pnl"),
+                "confidence": (round(p["confidence"] * 100) if p.get("confidence") is not None else None),
+                "opened_at": p.get("opened_at"),
+                "mode": "PAPER_OVERFLOW" if sh else (p.get("mode") or "LIVE"),
+            })
+
+        # Closed round-trips from the journal → Trades tab + Overview equity curve.
+        db = _open_db()
+        try:
+            closed_rows = [t for t in db.recent_trades(limit=1000) if t.pnl is not None]
+        finally:
+            db.close()
+        closed_trades = [{
+            "closed_at": (t.closed_at or t.opened_at).isoformat(),
+            "symbol": t.symbol, "direction": _dir(t.side.value),
+            "strategy": nums.get(t.strategy), "size": t.volume,
+            "entry": t.entry_price, "close_price": t.exit_price,
+            "pnl": t.pnl, "realised_pnl": t.pnl,          # curve uses pnl, table realised_pnl
+            "close_reason": (t.context or {}).get("close_reason", ""),
+            "learning_only": t.mode == "learning",
+        } for t in closed_rows]
+
+        # The agent publishes "signal" (audit F-09 — this used to read a
+        # "latest_signal" key that never existed, so the Latest Signal card was
+        # permanently empty). Support both the nested best_trade shape the
+        # agent writes today and the older flat shape.
+        sig = st.get("signal") or st.get("latest_signal")
+        signal_block = {"best_trade": {}, "analysis": "", "no_trade_reason": None}
+        if sig and isinstance(sig.get("best_trade"), dict):
+            bt = sig["best_trade"]
+            conv = bt.get("confidence") or 0
+            signal_block = {
+                "best_trade": {
+                    **bt,
+                    "direction": _dir(bt.get("direction")),
+                    "confidence": round(conv * 100),
+                    "strategy": nums.get(bt.get("strategy_name")),
+                    "execute": conv > 0,
+                },
+                "analysis": sig.get("analysis", ""), "no_trade_reason": None,
+            }
+        elif sig:
+            conv = sig.get("conviction") or 0
+            signal_block = {
+                "best_trade": {
+                    "direction": _dir(sig.get("side")), "confidence": round(conv * 100),
+                    "symbol": sig.get("symbol"), "strategy": nums.get(sig.get("strategy")),
+                    "strategy_name": sig.get("strategy"), "execute": conv > 0,
+                },
+                "analysis": sig.get("rationale", ""), "no_trade_reason": None,
+            }
+
+        risk_settings = {**ctrl_rs, "PAPER_TRADE": paper}
+
+        # Shadow (paper) P/L, kept separate from the real/live account totals.
+        shadow_closed = round(sum(t.pnl for t in closed_rows
+                                  if t.mode == "shadow" and t.pnl is not None), 2)
+        shadow_running = round(sum((p.get("pnl") or 0) for p in st.get("open_positions", [])
+                                   if p.get("mode") == "shadow"), 2)
+
+        return JSONResponse({
+            **st,                                   # keep raw fields (views, macro, news, rl…)
+            "agent_enabled": not ctrl.get("paused", st.get("paused", False)),
+            "account": {"currency": "$", "equity": st.get("equity", 0),
+                        "balance": st.get("balance", 0)},
+            "pnl": {"total": round(running + closed, 2), "running": running, "closed": closed},
+            "pnl_shadow": {"closed": shadow_closed, "running": shadow_running},
+            "execution": {
+                "open_trades": sum(1 for p in st.get("open_positions", [])
+                                   if p.get("mode") not in ("shadow", "learning")),
+                "paper_trade_count": counts.get("real", 0),
+                "shadow_open_trades": sum(1 for p in st.get("open_positions", [])
+                                          if p.get("mode") == "shadow"),
+                "shadow_trade_count": counts.get("shadow", 0),
+            },
+            "signal": signal_block,
+            "risk_settings": risk_settings,
+            "open_trades": open_trades,
+            "closed_trades": closed_trades,
+        })
+
+    # ── instruments / intelligence ───────────────────────────────────────────
+
+    def _per_symbol(st: dict) -> dict:
+        """Translate the agent's compact per-symbol views into the UI's intel shape."""
+        per = {}
+        for sym, v in st.get("views", {}).items():
+            rsi = v.get("rsi", 50) or 50
+            pdir = v.get("prediction_dir")
+            if pdir is None:
+                trend = (v.get("ema_fast", 0) or 0) - (v.get("ema_slow", 0) or 0)
+                rl_dir = "BUY" if trend > 0 else ("SELL" if trend < 0 else "HOLD")
+            else:
+                rl_dir = "BUY" if pdir > 0 else ("SELL" if pdir < 0 else "HOLD")
+            gauge = max(-100, min(100, round((rsi - 50) * 2)))
+            imb = v.get("ob_imbalance")
+            ob_label = "balanced" if imb is None else (
+                "bid_heavy" if imb > 0.05 else ("ask_heavy" if imb < -0.05 else "balanced"))
+            per[sym] = {
+                "gauge": gauge,
+                "price": {"close": v.get("price"), "bid": v.get("price")},
+                "rl": {"direction": rl_dir},
+                "orderbook": {"status": "ok" if imb is not None else "na",
+                              "label": ob_label, "spread_bps": v.get("ob_spread")},
+                "webull": {"overall_signal": "—", "capital_flow": {"label": "—"},
+                           "recent_news": []},
+                "technicals": {},
+                "active_signals": [],
+            }
+        return per
+
+    @app.get("/api/instruments")
+    def instruments() -> JSONResponse:
+        st = _status()
+        return JSONResponse({"universe": st.get("universe", []),
+                             "intel": {"per_symbol": _per_symbol(st)}})
+
+    @app.get("/api/markets")
+    def markets() -> JSONResponse:
+        """Per-instrument cards for the Markets tab: price/gauge, sentiment, RL,
+        latest signal, per-symbol stats, and the on/off state."""
+        st = _status()
+        ctrl = _control().read()
+        inst = ctrl.get("instruments", {})
+        per = _per_symbol(st)
+        views = st.get("views", {})
+        universe = st.get("universe", []) or list(per.keys())
+        nums = _strategy_numbers()
+        db = _open_db()
+        try:
+            sigs = db.recent_signals(limit=3000)
+            trades = db.recent_trades(limit=1000)
+        finally:
+            db.close()
+        # recent_signals is newest-first → first one seen per symbol is the latest.
+        latest: dict[str, dict] = {}
+        for s in sigs:
+            sym = s.get("symbol")
+            if sym and sym not in latest:
+                latest[sym] = {
+                    "direction": _dir(s.get("side")), "strategy": nums.get(s.get("strategy")),
+                    "strategy_name": s.get("strategy"),
+                    "confidence": round((s.get("conviction") or 0) * 100),
+                    "disposition": s.get("disposition"), "ts": s.get("ts"),
+                }
+        stats: dict[str, dict] = {}
+        # Per-(symbol, strategy) aggregates → most profitable strategy per symbol.
+        by_strat: dict[str, dict[str, dict]] = {}
+        for t in trades:
+            if t.pnl is None:
+                continue
+            a = stats.setdefault(t.symbol, {"n": 0, "pnl": 0.0, "wins": 0})
+            a["n"] += 1
+            a["pnl"] += t.pnl
+            a["wins"] += 1 if t.pnl > 0 else 0
+
+            strat = t.strategy or "?"
+            sa = by_strat.setdefault(t.symbol, {}).setdefault(
+                strat, {"n": 0, "pnl": 0.0, "wins": 0, "gp": 0.0, "gl": 0.0})
+            sa["n"] += 1
+            sa["pnl"] += t.pnl
+            if t.pnl > 0:
+                sa["wins"] += 1
+                sa["gp"] += t.pnl
+            else:
+                sa["gl"] += -t.pnl
+
+        def _mps(sym: str) -> dict | None:
+            """Most profitable strategy for a symbol: highest total P/L."""
+            strats = by_strat.get(sym)
+            if not strats:
+                return None
+            name, agg = max(strats.items(), key=lambda kv: kv[1]["pnl"])
+            gp, gl = agg["gp"], agg["gl"]
+            # No losing trades → profit factor is infinite; signal that with null +
+            # a flag so the UI can render "∞" rather than choke on JSON Infinity.
+            pf = round(gp / gl, 2) if gl > 0 else None
+            return {
+                "strategy": nums.get(name),
+                "strategy_name": name,
+                "pnl": round(agg["pnl"], 2),
+                "win_rate": round(agg["wins"] / agg["n"] * 100, 1) if agg["n"] else None,
+                "profit_factor": pf,
+                "trades": agg["n"],
+            }
+
+        out = []
+        for sym in universe:
+            v = per.get(sym, {})
+            stt = stats.get(sym)
+            out.append({
+                "symbol": sym, "category": _category(sym),
+                "enabled": inst.get(sym, True),
+                "price": (v.get("price") or {}).get("close"),
+                "gauge": v.get("gauge", 0),
+                "rl_direction": (v.get("rl") or {}).get("direction", "HOLD"),
+                "sentiment": views.get(sym, {}).get("sentiment"),
+                "change_pct": views.get(sym, {}).get("change_pct"),
+                "offline_action": views.get(sym, {}).get("offline_action"),
+                "latest_signal": latest.get(sym),
+                "trades": stt["n"] if stt else 0,
+                "pnl": round(stt["pnl"], 2) if stt else 0.0,
+                "win_rate": round(stt["wins"] / stt["n"] * 100, 1) if stt and stt["n"] else None,
+                "mps": _mps(sym),
+            })
+        return JSONResponse({"markets": out})
+
+    @app.post("/api/instruments/toggle")
+    def toggle_instrument(body: dict = Body(...)) -> JSONResponse:
+        sym = body.get("symbol")
+        enabled = bool(body.get("enabled", True))
+        if not sym:
+            return JSONResponse({"error": "missing symbol"}, status_code=400)
+        try:
+            _control().set_instrument_enabled(sym, enabled)
+            return JSONResponse({"status": "ok", "symbol": sym, "enabled": enabled})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to toggle instrument: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/intelligence")
+    def intelligence() -> JSONResponse:
+        st = _status()
+        universe = set(st.get("universe", []))
+        raw_news = st.get("news", [])
+
+        # Tag each article with the instruments/category it's relevant to, so the
+        # UI can group cards by market instead of showing a flat headline list.
+        news = []
+        for n in raw_news:
+            syms = [s for s in (n.get("symbols") or []) if not universe or s in universe] \
+                or list(n.get("symbols") or [])
+            cats = sorted({_category(s) for s in syms}) if syms else []
+            primary = cats[0] if cats else "General"
+            news.append({**n, "symbols": syms, "categories": cats, "group": primary})
+
+        # Build relevance-sorted groups: instruments the agent trades first, then
+        # general market news. Group key is the category (FX/Crypto/…/General).
+        groups: dict[str, dict] = {}
+        for n in news:
+            key = n["group"]
+            g = groups.setdefault(key, {"group": key, "symbols": set(), "items": []})
+            g["items"].append(n)
+            g["symbols"].update(n["symbols"])
+        ordered = sorted(
+            ({"group": g["group"], "symbols": sorted(g["symbols"]),
+              "count": len(g["items"]), "items": g["items"]} for g in groups.values()),
+            key=lambda g: (g["group"] == "General", -g["count"], g["group"]),
+        )
+
+        return JSONResponse({
+            "intel": {"per_symbol": _per_symbol(st)},
+            "sentiment": {"fear_and_greed": None},
+            "macro": st.get("macro", []),
+            "news": news,
+            "news_groups": ordered,
+        })
+
+    # ── strategies (read + control) ──────────────────────────────────────────
+
+    @app.get("/api/strategies")
+    def strategies() -> JSONResponse:
+        st = _status()
+        ctrl = _control().read()  # Read control overrides
+        nums = _strategy_numbers()
+        reported = {s["name"]: s for s in st.get("strategies", [])}
+        db = _open_db()
+        try:
+            sig_agg = _signal_aggregates(db)
+            # Fetch all trades once and bucket by strategy, instead of one query
+            # per registered strategy (was an N+1 re-run on every 5s poll).
+            by_strat: dict[str, list] = {}
+            for t in db.recent_trades(limit=5000):
+                by_strat.setdefault(t.strategy or "", []).append(t)
+            out = []
+            for name in _REGISTRY:
+                s = reported.get(name, {})
+                strat_trades = by_strat.get(name, [])
+                m = evaluate(strat_trades)
+                sa = sig_agg.get(name, {})
+                # Prioritize control.json mode over status.json (control is most recent)
+                mode = ctrl.get("strategies", {}).get(name) or s.get("mode", "off")
+                enabled = mode != "off"
+                # Cumulative-PnL sparkline (oldest→newest) for the strategy card.
+                curve, cum = [], 0.0
+                for t in reversed(strat_trades):
+                    if t.pnl is None:
+                        continue
+                    cum += t.pnl
+                    curve.append(round(cum, 2))
+                # Best symbols for this strategy (mirror of the instrument
+                # cards' "most profitable strategy" block): per-symbol win
+                # rate / trades / P&L, top 5 by P&L.
+                by_sym: dict[str, list] = {}
+                for t in strat_trades:
+                    if t.pnl is not None and t.symbol:
+                        by_sym.setdefault(t.symbol, []).append(t)
+                top_symbols = sorted(
+                    ({"symbol": sym,
+                      "win_rate": round(sm.win_rate * 100, 1),
+                      "trades": sm.n_trades,
+                      "pnl": round(sm.total_pnl, 2)}
+                     for sym, ts in by_sym.items() for sm in (evaluate(ts),)),
+                    key=lambda r: r["pnl"], reverse=True)[:5]
+                out.append({
+                    "strategy": nums.get(name),
+                    "name": name,
+                    "timeframe": s.get("timeframe", "—"),
+                    "indicators": _strategy_indicators(name),
+                    "enabled": enabled,
+                    "mode": mode,
+                    "excluded_symbols": s.get("excluded_symbols", []),
+                    "top_symbols": top_symbols,
+                    "performance": {
+                        "win_rate": round(m.win_rate * 100, 1),
+                        "count": m.n_trades,
+                        "wins": int(round(m.win_rate * m.n_trades)) if m.n_trades else 0,
+                        "losses": m.n_trades - int(round(m.win_rate * m.n_trades)) if m.n_trades else 0,
+                        "pnl": round(m.total_pnl, 2),
+                        "avg_return": round(m.expectancy, 4),
+                        "profit_factor": round(m.profit_factor, 2) if math.isfinite(m.profit_factor) else None,
+                        "avg_confidence": sa.get("avg_confidence"),
+                        "curve": curve,
+                    },
+                })
+        finally:
+            db.close()
+        disabled = sum(1 for s in out if not s["enabled"])
+        return JSONResponse({"strategies": out, "total": len(out),
+                             "disabled_count": disabled, "paused": st.get("paused", False)})
+
+    @app.post("/api/strategies/toggle")
+    def toggle_strategy(body: dict = Body(...)) -> JSONResponse:
+        """Number-based toggle used by the Strategies tab: enabled→shadow, else off."""
+        num = body.get("strategy")
+        enabled = bool(body.get("enabled", False))
+        name = next((n for n, i in _strategy_numbers().items() if i == num), None)
+        if name is None:
+            return JSONResponse({"error": f"unknown strategy #{num}"}, status_code=404)
+        try:
+            _control().set_strategy_mode(name, "shadow" if enabled else "off")
+            return JSONResponse({"status": "ok", "strategy": num, "enabled": enabled})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to toggle strategy: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/strategies/{name}/mode")
+    def set_mode(name: str, body: dict = Body(...)) -> JSONResponse:
+        mode = body.get("mode")
+        if mode not in ("off", "shadow", "live"):
+            return JSONResponse({"error": "mode must be off|shadow|live"}, status_code=400)
+        if name not in _REGISTRY:
+            return JSONResponse({"error": f"unknown strategy '{name}'"}, status_code=404)
+        try:
+            data = _control().set_strategy_mode(name, mode)
+            return JSONResponse({"ok": True, "control": data})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to set strategy mode: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/kill")
+    def kill(body: dict = Body(...)) -> JSONResponse:
+        """Engage/disengage the hard stop. The agent checks this flag (and the
+        data/KILL file) before any order can leave, every loop."""
+        try:
+            ctrl = _control()
+            data = ctrl.read()
+            data["kill"] = bool(body.get("engage", True))
+            ctrl.write(data)
+            return JSONResponse({"ok": True, "kill": data["kill"]})
+        except Exception as e:
+            logging.error("Failed to set kill switch: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/audit")
+    def audit_tail(limit: int = 200) -> JSONResponse:
+        """Recent audit-trail entries + chain integrity check."""
+        from ..persistence.audit import AuditLog
+        alog = AuditLog(os.getenv("GUNGNIR_AUDIT_PATH", "data/audit.jsonl"))
+        intact, checked, first_bad = alog.verify()
+        return JSONResponse({"intact": intact, "entries_verified": checked,
+                             "first_bad_ts": first_bad,
+                             "events": alog.tail(limit)})
+
+    @app.post("/api/pause")
+    def pause(body: dict = Body(...)) -> JSONResponse:
+        try:
+            data = _control().set_paused(bool(body.get("paused", False)))
+            return JSONResponse({"ok": True, "control": data})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to set pause state: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/agent/toggle")
+    def toggle_agent(body: dict = Body(...)) -> JSONResponse:
+        try:
+            data = _control().set_paused(not body.get("enabled", False))
+            return JSONResponse({"status": "ok", "control": data})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to toggle agent: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/offline_gate/toggle")
+    def toggle_offline_gate(body: dict = Body(...)) -> JSONResponse:
+        """Enable/disable the guarded offline-RL veto (veto-only, never upsizes)."""
+        try:
+            ctrl = _control()
+            data = ctrl.read()
+            data["offline_gate"] = bool(body.get("enabled", False))
+            ctrl.write(data)
+            return JSONResponse({"status": "ok", "offline_gate": data["offline_gate"]})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to toggle offline gate: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # Whitelist of risk settings the dashboard may write, with validators, so a
+    # typo or hostile caller can't persist arbitrary keys or null out a limit.
+    _RISK_FIELDS = {
+        "account_risk_per_trade": lambda v: 0 < float(v) <= 1,
+        "vol_target_annual": lambda v: 0 <= float(v) <= 10,
+        "max_portfolio_exposure": lambda v: float(v) >= 0,
+        "max_per_asset_exposure": lambda v: float(v) >= 0,
+        "max_open_positions": lambda v: int(v) >= 0,
+        "max_opens_per_symbol_per_bar": lambda v: int(v) >= 0,
+        "daily_loss_limit": lambda v: 0 < float(v) <= 1,
+        "max_daily_drawdown": lambda v: 0 <= float(v) <= 1,
+        "max_intraday_drawdown": lambda v: 0 <= float(v) <= 1,
+        "max_total_drawdown": lambda v: 0 <= float(v) <= 1,
+        "min_confidence": lambda v: 0 <= float(v) <= 1,
+        "min_lot": lambda v: float(v) >= 0,
+        "max_lot": lambda v: v is None or float(v) >= 0,
+        "starting_balance": lambda v: float(v) > 0,
+        "spread_bps": lambda v: float(v) >= 0,
+        "commission_bps": lambda v: float(v) >= 0,
+        "slippage_bps": lambda v: float(v) >= 0,
+        "stop_atr_mult": lambda v: float(v) >= 0,
+        "tp_atr_mult": lambda v: float(v) >= 0,
+        "leverage": lambda v: float(v) > 0,
+        "leverage_safety_margin": lambda v: 0 <= float(v) < 1,
+        "leverage_by_type": lambda v: isinstance(v, dict) and all(float(x) > 0 for x in v.values()),
+        "min_lot_by_type": lambda v: isinstance(v, dict) and all(float(x) >= 0 for x in v.values()),
+        "max_lot_by_type": lambda v: isinstance(v, dict) and all(x is None or float(x) >= 0 for x in v.values()),
+        "PAPER_TRADE": lambda v: isinstance(v, bool),
+    }
+
+    @app.post("/api/risk")
+    def set_risk(body: dict = Body(...)) -> JSONResponse:
+        try:
+            clean, rejected = {}, []
+            for k, v in (body or {}).items():
+                validate = _RISK_FIELDS.get(k)
+                if validate is None:
+                    rejected.append(k)
+                    continue
+                try:
+                    if validate(v):
+                        clean[k] = v
+                    else:
+                        rejected.append(k)
+                except (TypeError, ValueError):
+                    rejected.append(k)
+            if not clean:
+                return JSONResponse({"error": "no valid risk settings", "rejected": rejected},
+                                    status_code=400)
+            data = _control().read()
+            data.setdefault("risk_settings", {}).update(clean)
+            _control().write(data)
+            return JSONResponse({"status": "ok", "applied": list(clean),
+                                 "rejected": rejected,
+                                 "risk_settings": data.get("risk_settings", {})})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to set risk settings: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    _FILTER_BOOLS = ("trend", "volatility", "volume", "session", "spread", "regime")
+    _FILTER_NUMS = {
+        "vol_min": lambda v: float(v) >= 0,
+        "vol_max": lambda v: float(v) > 0,
+        "min_volume_ratio": lambda v: float(v) >= 0,
+        "max_spread_bps": lambda v: float(v) >= 0,
+        "adx_trend": lambda v: float(v) >= 0,
+    }
+
+    _LEARNING_FIELDS = {
+        "reflection_mode": lambda v: v in ("llm", "bayesian"),
+    }
+
+    @app.post("/api/filters")
+    def set_filters(body: dict = Body(...)) -> JSONResponse:
+        """Persist pre-trade filter toggles/params (whitelisted) to the control file."""
+        try:
+            clean, rejected = {}, []
+            for k, v in (body or {}).items():
+                if k in _FILTER_BOOLS:
+                    clean[k] = bool(v)
+                elif k in _FILTER_NUMS:
+                    try:
+                        clean[k] = float(v) if _FILTER_NUMS[k](v) else rejected.append(k)
+                        if clean.get(k) is None:
+                            clean.pop(k, None)
+                    except (TypeError, ValueError):
+                        rejected.append(k)
+                else:
+                    rejected.append(k)
+            ctrl = _control()
+            data = ctrl.read()
+            data.setdefault("filters", {}).update(clean)
+            ctrl.write(data)
+            return JSONResponse({"status": "ok", "applied": list(clean),
+                                 "rejected": rejected, "filters": data["filters"]})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to set filters: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/learning")
+    def set_learning(body: dict = Body(...)) -> JSONResponse:
+        """Persist learning settings (reflection_mode) to the control file."""
+        try:
+            clean, rejected = {}, []
+            for k, v in (body or {}).items():
+                validate = _LEARNING_FIELDS.get(k)
+                if validate is None:
+                    rejected.append(k)
+                    continue
+                if validate(v):
+                    clean[k] = v
+                else:
+                    rejected.append(k)
+            if not clean:
+                return JSONResponse({"error": "no valid learning settings", "rejected": rejected},
+                                    status_code=400)
+            data = _control().read()
+            data.setdefault("learning", {}).update(clean)
+            _control().write(data)
+            return JSONResponse({"status": "ok", "applied": list(clean),
+                                 "rejected": rejected,
+                                 "learning": data.get("learning", {})})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to set learning settings: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/trades/close")
+    def close_trades(body: dict = Body(...)) -> JSONResponse:
+        """Request the agent to close one or more positions.
+
+        Body: {"symbols": ["EURUSD"] or null for all open positions}
+        """
+        try:
+            symbols = body.get("symbols")  # None = close all, list = close specific
+            ctrl = _control()
+            data = ctrl.read()
+            data["close_positions"] = symbols  # None or list of symbols
+            ctrl.write(data)
+            return JSONResponse({"status": "ok", "close_request": symbols})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to request position close: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/shadow/reset")
+    def reset_shadow(body: dict = Body(...)) -> JSONResponse:
+        """Reset shadow (paper trading) history and equity."""
+        try:
+            ctrl = _control()
+            data = ctrl.read()
+            data["reset_shadow"] = True
+            ctrl.write(data)
+            return JSONResponse({"status": "ok", "action": "shadow_reset"})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to request shadow reset: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/trades/reset")
+    def reset_trades(body: dict = Body(...)) -> JSONResponse:
+        """Reset entire trade history (database)."""
+        try:
+            ctrl = _control()
+            data = ctrl.read()
+            data["reset_trades"] = True
+            ctrl.write(data)
+            return JSONResponse({"status": "ok", "action": "trades_reset"})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to request trades reset: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/rl/reset")
+    def reset_rl(body: dict = Body(...)) -> JSONResponse:
+        """Reset RL policy to zero (restart learning from scratch)."""
+        try:
+            ctrl = _control()
+            data = ctrl.read()
+            data["reset_rl"] = True
+            ctrl.write(data)
+            return JSONResponse({"status": "ok", "action": "rl_reset"})
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to request RL reset: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/backtest")
+    def get_backtest_cached() -> JSONResponse:
+        return JSONResponse({})
+
+    @app.post("/api/backtest/run")
+    def run_backtest(body: dict = Body(...)) -> JSONResponse:
+        try:
+            from datetime import datetime
+
+            symbol = body.get("symbol", "XBTUSD")
+            sl_pct = float(body.get("sl_pct", 1.5))
+            tp_pct = float(body.get("tp_pct", 3.0))
+            lookback_days = int(body.get("lookback_days", 7))
+            strategies = body.get("strategies", [1, 2, 3])
+
+            # Account + sizing knobs (fall back to the saved risk settings).
+            ctrl_rs = _control().read().get("risk_settings", {})
+            starting_equity = float(
+                body.get("starting_balance", ctrl_rs.get("starting_balance", 10_000.0))
+            )
+            min_lot = float(body.get("min_lot", ctrl_rs.get("min_lot", 0.0)) or 0.0)
+            max_lot_raw = body.get("max_lot", ctrl_rs.get("max_lot"))
+            max_lot = float(max_lot_raw) if max_lot_raw not in (None, "", 0) else None
+
+            # Transaction-cost model (bps). Request overrides → saved settings.
+            from ..backtest.costs import CostModel
+            cost = CostModel.from_config(
+                _config(),
+                spread_bps=body.get("spread_bps", ctrl_rs.get("spread_bps")),
+                commission_bps=body.get("commission_bps", ctrl_rs.get("commission_bps")),
+                slippage_bps=body.get("slippage_bps", ctrl_rs.get("slippage_bps")),
+            )
+
+            # Replay the live configuration so the backtest reflects how the agent
+            # actually trades, not a raw one-strategy sandbox (default on; set the
+            # flags false to backtest raw strategy edge instead).
+            apply_filters = bool(body.get("apply_filters", True))
+            use_live_sizer = bool(body.get("use_live_sizer", True))
+            bt_filters = None
+            if apply_filters:
+                from ..core.filters import FilterConfig
+                bt_filters = FilterConfig.from_dict(_control().read().get("filters"))
+            bt_sizer = None
+            if use_live_sizer:
+                from ..risk.position_sizing import build_sizer
+                bt_sizer = build_sizer(_config())
+
+            # Map strategy numbers to names
+            strat_nums = _strategy_numbers()
+            num_to_name = {v: k for k, v in strat_nums.items()}
+
+            # Prefer real Capital.com candles; fall back to synthetic when creds are
+            # absent or the fetch fails. Cap high enough that slow indicators
+            # (CCI/EMA 200) have the history they need to fire.
+            n_bars = min(max(lookback_days * 24, 300), 1000)
+            timeframe = body.get("timeframe", "1h")
+            candles, data_source = _backtest_candles(symbol, n_bars, timeframe)
+            # Build indicators once and share across every strategy in this run.
+            feats = engine.feature_store.build_kraken_series(symbol, candles)
+
+            results = {}
+            for strat_num in strategies:
+                strat_num = int(strat_num)
+                strat_name = num_to_name.get(strat_num)
+                if not strat_name:
+                    continue
+
+                strat = _REGISTRY[strat_name](mode="shadow", symbols=[symbol])
+                res = engine.run(
+                    strat, candles, symbol,
+                    starting_equity=starting_equity,
+                    sl_pct=sl_pct, tp_pct=tp_pct,
+                    min_lot=min_lot, max_lot=max_lot,
+                    feats=feats, cost=cost,
+                    sizer=bt_sizer, filters=bt_filters,
+                )
+
+                # Format trades for frontend
+                trades = []
+                for t in res.trades:
+                    pnl_pct = (t.pnl / (t.entry_price * t.volume)) * 100 if t.pnl and t.entry_price and t.volume else 0
+                    trades.append({
+                        "entry_time": datetime.now().isoformat(),
+                        "exit_time": datetime.now().isoformat(),
+                        "direction": "LONG" if t.side.name == "BUY" else "SHORT",
+                        "entry": round(t.entry_price, 4),
+                        "exit": round(t.exit_price, 4) if t.exit_price else 0,
+                        "pnl_pct": round(pnl_pct, 3),
+                        "exit_reason": "backtest"
+                    })
+
+                # Format metrics
+                m = res.metrics
+                wins = int(round(m.win_rate * m.n_trades)) if m.n_trades else 0
+                losses = m.n_trades - wins if m.n_trades else 0
+                ret_pct = (m.total_pnl / starting_equity * 100) if starting_equity else 0.0
+                results[str(strat_num)] = {
+                    "name": strat_name,
+                    "period": f"{n_bars}h",
+                    "bars": n_bars,
+                    "trades": trades,
+                    "metrics": {
+                        "total_trades": m.n_trades,
+                        "win_rate": round(m.win_rate * 100, 1),
+                        "wins": wins,
+                        "losses": losses,
+                        "total_pnl": round(m.total_pnl, 2),
+                        "final_equity": round(starting_equity + m.total_pnl, 2),
+                        "total_return_pct": round(ret_pct, 2),
+                        "avg_return_pct": round(m.expectancy / starting_equity * 100, 3) if (m.expectancy and starting_equity) else 0,
+                        "max_drawdown_pct": round(m.max_drawdown, 2),
+                        "profit_factor": round(m.profit_factor, 2) if math.isfinite(m.profit_factor) else None,
+                        "filter_vetoes": res.filter_vetoes,
+                        "equity_curve": res.equity_curve
+                    }
+                }
+
+            return JSONResponse({
+                "symbol": symbol,
+                "sl_pct": sl_pct,
+                "tp_pct": tp_pct,
+                "lookback_days": lookback_days,
+                "starting_balance": starting_equity,
+                "data_source": data_source,      # "capital.com" or "synthetic"
+                "costs": {"spread_bps": cost.spread_bps, "commission_bps": cost.commission_bps,
+                          "slippage_bps": cost.slippage_bps},
+                # What live configuration was replayed into this run.
+                "settings": {
+                    "filters_applied": (
+                        [k for k, v in vars(bt_filters).items() if v is True]
+                        if bt_filters is not None else False),
+                    "sizer": (_config().get("risk", "sizer", default="vol_target")
+                              if use_live_sizer else "backtest_default"),
+                },
+                "strategies": results,
+                "completed_at": datetime.now().isoformat()
+            })
+        except Exception as e:
+            pass  # logging imported at module level
+            logging.error("Failed to run backtest: %s", e, exc_info=True)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ── metrics / learning / signals / trades / equity ───────────────────────
+
+    @app.get("/api/telemetry")
+    def telemetry() -> JSONResponse:
+        """Prometheus metrics from the agent, reshaped for the Trades tab card.
+
+        The agent serves text on GUNGNIR_METRICS_URL (default localhost:9109;
+        compose sets http://gungnir:9109/metrics). Unreachable → available:
+        false with whatever status.json can still supply, so the card degrades
+        instead of erroring."""
+        url = os.getenv("GUNGNIR_METRICS_URL", "http://localhost:9109/metrics")
+        st = _status()
+        try:
+            import httpx
+            r = httpx.get(url, timeout=3.0)
+            r.raise_for_status()
+            data = _telemetry_from(_parse_prom_text(r.text), st)
+            data["available"] = True
+        except Exception as e:  # noqa: BLE001 — degrade, don't 500
+            data = {
+                "available": False,
+                "reason": str(e)[:200],
+                "loop": st.get("loop_seconds") or {},
+                "equity": {"real": st.get("equity")},
+                "cap": st.get("cap_saturation") or {},
+                "rl": {"brier": (st.get("rl") or {}).get("brier"),
+                       "take_rate": (st.get("rl") or {}).get("recent_take_rate")},
+            }
+        data["scrape_url"] = url
+        data["mode"] = st.get("mode")
+        return JSONResponse(data)
+
+    @app.get("/api/performance")
+    def performance() -> JSONResponse:
+        """Daily + weekly performance breakdown for the Reports tab.
+
+        Same module the daily Telegram digest uses, so the console and the
+        phone report agree. Per-strategy / per-instrument / per-side rows,
+        best/worst trade, avg confidence + slippage, and a summary line."""
+        from ..learning import reports
+        db = _open_db()
+        try:
+            from ..learning.journal import Journal
+            report = reports.build(Journal(db))
+            # Non-finite guard on the summary rows (profit_factor already None
+            # for inf; this catches any stray nan from odd data).
+            return JSONResponse(json.loads(json.dumps(report, default=str)))
+        finally:
+            db.close()
+
+    @app.get("/api/metrics")
+    def metrics() -> JSONResponse:
+        db = _open_db()
+        try:
+            overall = evaluate(db.recent_trades(limit=1000))
+            per_strategy = {}
+            seen = {t.strategy for t in db.recent_trades(limit=1000) if t.strategy}
+            for name in seen:
+                m = evaluate(db.recent_trades(strategy=name, limit=1000))
+                per_strategy[name] = _json_safe(m.model_dump())
+            return JSONResponse({"overall": _json_safe(overall.model_dump()),
+                                 "per_strategy": per_strategy})
+        finally:
+            db.close()
+
+    @app.get("/api/learning")
+    def learning(limit: int = 100) -> JSONResponse:
+        st = _status()
+        db = _open_db()
+        try:
+            events = db.recent_learning_events(limit=limit)
+            # Per-strategy win-rate priors — one query, bucketed (was N+1).
+            by_strat: dict[str, list] = {}
+            for t in db.recent_trades(limit=5000):
+                if t.strategy:
+                    by_strat.setdefault(t.strategy, []).append(t)
+            weights = {}
+            for name, rows in by_strat.items():
+                m = evaluate(rows)
+                weights[name] = {
+                    "strategy": name, "win_rate": round(m.win_rate, 3),
+                    "trades": m.n_trades, "wins": int(round(m.win_rate * m.n_trades)),
+                }
+        finally:
+            db.close()
+        return JSONResponse({
+            "rl": st.get("rl", {"enabled": False}),
+            "advisory": st.get("advisory"),
+            "strategy_weights": weights,
+            "events": events,
+        })
+
+    @app.get("/api/signals")
+    def signals(limit: int = 200) -> JSONResponse:
+        nums = _strategy_numbers()
+        db = _open_db()
+        try:
+            trades = db.recent_trades(limit=1000)
+            recent_sig = db.recent_signals(limit=limit)
+        finally:
+            db.close()
+
+        def _box(rows: list) -> dict:
+            pnls = [t.pnl for t in rows if t.pnl is not None]
+            if not pnls:
+                return {"win_rate": 0, "count": 0, "avg_return": 0, "wins": 0,
+                        "losses": 0, "pnl": 0}
+            wins = sum(1 for p in pnls if p > 0)
+            losses = sum(1 for p in pnls if p <= 0)
+            return {"win_rate": round(wins / len(pnls) * 100, 1), "count": len(pnls),
+                    "avg_return": round(sum(pnls) / len(pnls), 4),
+                    "wins": wins, "losses": losses, "pnl": round(sum(pnls), 2)}
+
+        def _group(key) -> dict:
+            buckets: dict[str, list] = {}
+            for t in trades:
+                if t.pnl is not None:
+                    buckets.setdefault(key(t), []).append(t)
+            out = {}
+            for k, rows in buckets.items():
+                b = _box(rows)
+                b["pnl"] = round(sum(t.pnl for t in rows), 2)
+                out[k] = b
+            return out
+
+        closed = [t for t in trades if t.pnl is not None]
+        recent = [{
+            "graded_at": s.get("ts", ""), "symbol": s.get("symbol"),
+            "direction": _dir(s.get("side")), "strategy": nums.get(s.get("strategy")),
+            "executed": s.get("disposition") in ("real", "shadow"),
+            # Recommended sizing/brackets + graded outcome (WIN/LOSS).
+            "lot": s.get("lot"), "take_profit": s.get("take_profit"),
+            "stop_loss": s.get("stop_loss"), "pnl": s.get("pnl"),
+            "won": (None if s.get("pnl") is None else s.get("pnl") > 0),
+            "confidence": round((s.get("conviction") or 0) * 100),
+            # Soft context at decision time (LLM sentiment score, RL P(take)).
+            "sentiment": s.get("sentiment"), "rl_p": s.get("rl_p"),
+        } for s in recent_sig]
+
+        return JSONResponse({
+            "overall": _box(closed),
+            "executed": _box([t for t in closed if t.mode == "real"]),
+            "shadow": _box([t for t in closed if t.mode == "shadow"]),
+            "total": len(recent_sig),
+            "by_strategy": _group(lambda t: t.strategy or "—"),
+            "by_symbol": _group(lambda t: t.symbol),
+            "recent": recent,
+        })
+
+    @app.get("/api/trades")
+    def trades(limit: int = 200) -> JSONResponse:
+        db = _open_db()
+        try:
+            rows = db.recent_trades(limit=limit)
+            return JSONResponse([
+                {
+                    "symbol": t.symbol, "side": t.side.value, "volume": t.volume,
+                    "entry_price": t.entry_price, "exit_price": t.exit_price,
+                    "pnl": t.pnl, "strategy": t.strategy, "mode": t.mode,
+                    "confidence": (t.context or {}).get("confidence"),
+                    # Excursion extremes in R (risk units): how far the trade went
+                    # for/against while open — the bracket-tuning evidence.
+                    "mfe_r": (t.context or {}).get("mfe_r"),
+                    "mae_r": (t.context or {}).get("mae_r"),
+                    "opened_at": t.opened_at.isoformat(),
+                    "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+                }
+                for t in rows
+            ])
+        finally:
+            db.close()
+
+    @app.get("/api/equity")
+    def equity() -> JSONResponse:
+        """Two realized equity curves: real trades and shadow (paper) trades.
+
+        Returns ``{"base", "real": [...], "shadow": [...]}``. Each point is
+        ``{"ts", "cum_pnl", "equity"}`` in chronological order, where ``equity``
+        is the account balance starting from the *initial* balance (not 0) plus
+        realized PnL. ``learning`` (skip) trades are excluded — they're
+        counterfactuals, not portfolio outcomes.
+        """
+        st = _status()
+        db = _open_db()
+        try:
+            closed = [t for t in reversed(db.recent_trades(limit=1000)) if t.pnl is not None]
+        finally:
+            db.close()
+
+        real_rows = [t for t in closed if t.mode not in ("shadow", "learning")]
+        shadow_rows = [t for t in closed if t.mode == "shadow"]
+
+        # Initial balance: an explicit Settings value wins; otherwise back it out
+        # from the current balance minus realized real PnL so the curve ends at the
+        # live balance; finally fall back to current balance/equity or a default.
+        ctrl_rs = _control().read().get("risk_settings", {})
+        total_real = sum(t.pnl for t in real_rows)
+        base = ctrl_rs.get("starting_balance")
+        if base is None:
+            cur_bal = st.get("balance")
+            base = (cur_bal - total_real) if cur_bal else (st.get("equity") or 10_000.0)
+        base = float(base)
+
+        def _curve(rows) -> list[dict]:
+            out, cum = [], 0.0
+            for t in rows:
+                cum += t.pnl
+                out.append({"ts": (t.closed_at or t.opened_at).isoformat(),
+                            "cum_pnl": round(cum, 2), "equity": round(base + cum, 2)})
+            return out
+
+        return JSONResponse({"base": round(base, 2),
+                             "real": _curve(real_rows), "shadow": _curve(shadow_rows)})
+
+    # ── settings / backtest ──────────────────────────────────────────────────
+
+    @app.get("/api/llm/providers")
+    def llm_providers() -> JSONResponse:
+        cfg = _config()
+        return JSONResponse({"provider": cfg.get("llm", "provider", default="none"),
+                             "providers": ["ollama", "anthropic", "codex", "none"]})
+
+    @app.post("/api/llm/provider")
+    def set_llm_provider(body: dict = Body(...)) -> JSONResponse:
+        provider = body.get("provider")
+        if provider not in ("ollama", "anthropic", "codex", "none"):
+            return JSONResponse({"error": "provider must be ollama|anthropic|codex|none"}, status_code=400)
+        data = _control().read()
+        data["llm_provider"] = provider
+        _control().write(data)
+        return JSONResponse({"ok": True, "provider": provider, "restart_required": False})
+
+    @app.get("/api/settings")
+    def settings() -> JSONResponse:
+        cfg = _config()
+        # cfg.raw never contains secrets (those live only in .env / cfg.secrets).
+        return JSONResponse({"config": cfg.raw, "control": _control().read(),
+                             "strategies_available": list(_REGISTRY.keys())})
+
+    @app.post("/api/backtest")
+    def backtest(body: dict = Body(...)) -> JSONResponse:
+        name = body.get("strategy")
+        if name not in _REGISTRY:
+            return JSONResponse({"error": f"unknown strategy '{name}'"}, status_code=404)
+        symbol = body.get("symbol", "SYNTH")
+        params = body.get("params", {})
+        n_bars = int(body.get("n_bars", 500))
+        seed = body.get("seed")
+        start = float(body.get("start_price", 1.10))
+        vol = float(body.get("vol", 0.0015))
+
+        strat = _REGISTRY[name](params=params, mode="shadow", symbols=[symbol])
+        candles = engine.synthetic_candles(symbol, n=n_bars, start=start, vol=vol, seed=seed)
+        res = engine.run(strat, candles, symbol)
+        return JSONResponse({
+            "strategy": name,
+            "symbol": symbol,
+            "params": strat.params,
+            "metrics": _json_safe(res.metrics.model_dump()),
+            "equity_curve": res.equity_curve,
+            "trades": [
+                {"side": t.side.value, "entry_price": round(t.entry_price, 5),
+                 "exit_price": round(t.exit_price, 5) if t.exit_price else None,
+                 "pnl": round(t.pnl, 2) if t.pnl is not None else None}
+                for t in res.trades
+            ],
+        })
+
+    if _STATIC.exists():
+        @app.get("/")
+        def index() -> FileResponse:
+            return FileResponse(_STATIC / "index.html")
+
+        app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
+
+    return app
+
+
+app = create_app()

@@ -1,0 +1,2168 @@
+"""The Agent: orchestrates one full sense → decide → size → execute → learn cycle.
+
+This wires the layers together but contains no trading *logic* of its own — that
+lives in strategies and risk. Reading `fast_step` top-to-bottom is the clearest
+summary of how the whole system flows.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from pathlib import Path
+
+from ..config import Config
+from ..data.feeds import MacroFeed, MarketFeed, NewsFeed
+from ..data.models import NewsItem, Side, Signal
+from ..execution.broker import Broker, PaperBroker
+from ..execution.netting import NET_TAG, NettingBroker
+from ..features import feature_store
+from ..learning import reflection_pipeline
+from ..learning.evaluator import evaluate
+from ..learning.journal import Journal
+from ..learning.rl import TAKE, RLPolicy
+from ..learning.rl.convergence_monitor import ConvergenceMonitor
+from . import filters
+from .aggregator import SignalAggregator
+from .control import Control
+from ..llm import prediction as llm_prediction
+from ..llm import sentiment as llm_sentiment
+from ..llm.client import LLMClient
+from ..risk.portfolio import PortfolioRisk
+from ..risk.position_sizing import PositionSizer
+from ..strategy.registry import StrategyRegistry
+
+log = logging.getLogger(__name__)
+
+# Sentinel for a "close every open position" request. Needed because None is
+# already the idle state of _pending_closes — without a distinct marker, a
+# close-all request (which carries no symbol list) is indistinguishable from
+# "nothing pending" and the dashboard's Close-All button silently does nothing.
+CLOSE_ALL = "__ALL__"
+
+
+class Agent:
+    def __init__(
+        self,
+        config: Config,
+        market: MarketFeed,
+        news: NewsFeed,
+        macro: MacroFeed,
+        llm: LLMClient,
+        strategies: StrategyRegistry,
+        sizer: PositionSizer,
+        risk: PortfolioRisk,
+        broker: Broker,
+        journal: Journal,
+    ):
+        self.config = config
+        self.market = market
+        self.news = news
+        self.macro = macro
+        self.llm = llm
+        self.strategies = strategies
+        self.sizer = sizer
+        self.risk = risk
+        self.broker: Broker = broker
+        self.journal = journal
+
+        self.universe = [
+            u["symbol"]
+            for u in config.get("universe", default=[])
+            if u.get("enabled", True)
+        ]
+        self.tf = config.get("data", "market", "candle_timeframe", default="M5")
+        self.depth = config.get("data", "market", "orderbook_depth", default=10)
+        # Caches refreshed at their own cadence within the fast loop.
+        self._news: list[NewsItem] = []
+        self._news_ts: float = 0.0
+        self._news_poll = float(config.get("data", "news", "poll_seconds", default=600) or 600)
+        self._macro = []
+        # Latest per-symbol view, published to the dashboard each fast loop.
+        self._last_view: dict[str, dict] = {}
+        self._latest_signal: dict | None = None
+        self.status_path = config.get("dashboard", "status_path", default="data/status.json")
+        # Shared reference to the scheduler's per-loop wall times (main.py wires
+        # it); published to status.json so overruns are visible on the dashboard.
+        self.loop_durations: dict[str, float] = {}
+
+        # Shadow broker: paper-trades signals from strategies in `shadow` mode (and
+        # all trades while in global dry-run) so they can be evaluated risk-free.
+        # In dry-run the primary broker is already paper, so reuse it — the whole
+        # account then reflects the simulation. Live keeps them separate.
+        # Cost model for paper fills so shadow/learning P&L matches what live nets.
+        from ..backtest.costs import CostModel
+        self._paper_cost = CostModel.from_config(config)
+        # Netted execution (execution.netting, default on): every strategy fills
+        # on its own virtual book (attribution for journal/allocator/RL), while
+        # the account broker holds one net position per symbol, reconciled once
+        # per symbol per fast loop. Live net orders are compliance-vetted via
+        # _vet_net_order; note net positions carry no broker-side brackets —
+        # exits are agent-managed on the virtual books.
+        self._netting = bool(config.get("execution", "netting", default=True))
+        self.shadow_broker: Broker
+        # Catastrophe stop on net positions: the broker-side dead-man brake
+        # (mult × widest virtual stop; pct-of-price fallback; mult 0 disables).
+        cat_mult = float(config.get("execution", "catastrophe_stop_mult", default=1.5) or 0)
+        cat_pct = float(config.get("execution", "catastrophe_stop_pct", default=0.05) or 0)
+        if self._netting:
+            vet = None if isinstance(broker, PaperBroker) else self._vet_net_order
+            self.broker = NettingBroker(broker, cost=self._paper_cost, order_vet=vet,
+                                        catastrophe_stop_mult=cat_mult,
+                                        catastrophe_stop_pct=cat_pct)
+            if isinstance(broker, PaperBroker):
+                self.shadow_broker = self.broker
+            else:
+                self.shadow_broker = NettingBroker(
+                    PaperBroker(starting_equity=self.risk.equity or 10_000.0,
+                                cost=self._paper_cost),
+                    cost=self._paper_cost)
+        elif isinstance(broker, PaperBroker):
+            self.shadow_broker = broker
+        else:
+            self.shadow_broker = PaperBroker(
+                starting_equity=self.risk.equity or 10_000.0, cost=self._paper_cost)
+        # Control channel written by the dashboard (strategy modes, global pause).
+        self.control = Control(config.get("dashboard", "control_path", default="data/control.json"))
+        self._paused = False
+        # Runtime execution mode: True = paper (orders fill on the shadow broker),
+        # False = live (orders go to the connected real broker). Seeded from
+        # config dry_run at startup; the dashboard PAPER/LIVE button flips it.
+        self._paper_mode: bool = config.dry_run
+        # Logical real-book baseline used when paper and shadow share a broker.
+        self._paper_real_base: float = float(self.risk.equity or 10000.0)
+        self._disabled_symbols: set[str] = set()
+        self._pending_closes: list[str] | None = None  # None = close all, list = specific symbols
+        # UTC date the daily-drawdown baseline was set for; rolled at session change.
+        self._risk_day = None
+        # Restore drawdown-breaker state across restarts: the total-dd breaker
+        # measures from the all-time peak, which must survive the process.
+        self._risk_state_path = config.get("risk", "state_path",
+                                           default="data/risk_state.json")
+        restored_day = self.risk.load_state(self._risk_state_path)
+        if restored_day:
+            from datetime import date as _date
+            try:
+                self._risk_day = _date.fromisoformat(restored_day)
+            except ValueError:
+                pass
+        # LLM caching. Sentiment is MARKET-LEVEL: RSS carries no symbol tags, so
+        # per-symbol calls scored the same headlines N times. One call per news
+        # cycle serves every symbol. Predictions stay per-symbol (they condition
+        # on the symbol's features) with their own longer TTL. Both refresh in
+        # the background on a small dedicated executor — the default shared
+        # thread pool must never fill up with rate-limiter sleeps (72 queued
+        # refreshes once starved the news fetch and reflection for minutes).
+        self._llm_state: dict[str, dict] = {}          # per-symbol: prediction
+        self._market_sent: dict = {"ts": 0.0, "sentiment": None, "news_key": ""}
+        self._llm_interval = float(config.get("llm", "refresh_seconds", default=900) or 900)
+        self._prediction_ttl = float(config.get(
+            "llm", "prediction_ttl_seconds", default=3600) or 3600)
+        from concurrent.futures import ThreadPoolExecutor
+        self._llm_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="llm")
+        self._llm_tasks: set = set()   # strong refs to in-flight refresh tasks
+        # Per-symbol broker minimum deal size (from the feed's dealing rules),
+        # cached so orders aren't sized below what the broker will accept.
+        self._min_deal: dict[str, float] = {}
+        # Pre-trade context filters (toggled from the dashboard) + reject tally.
+        from .filters import FilterConfig
+        self._filters = FilterConfig.from_dict(config.get("filters", default={}))
+        from collections import Counter
+        self._filter_rejects: Counter = Counter()
+        self._rl_alarm_ts: float = 0.0   # throttle for the RL collapse warning
+        # Loss-streak cooldown: bench a strategy on a symbol after N straight
+        # losing round-trips there (the counter-trend re-entry loop).
+        from ..risk.cooldown import LossStreakGuard
+        self._cooldown = LossStreakGuard(
+            max_streak=int(config.get("risk", "loss_streak_trades", default=3) or 0),
+            cooldown_minutes=float(
+                config.get("risk", "loss_streak_cooldown_minutes", default=60) or 0),
+        )
+
+        # ── operational controls (institutional-practices tranche) ──────────
+        # Hash-chained audit trail, operator alerting, pre-trade compliance,
+        # and the kill switch. All fail-open for trading *safety* (an audit
+        # write failure can't block an exit) but fail-closed for orders (a
+        # compliance failure blocks the order).
+        from ..persistence.audit import AuditLog
+        from .alerts import Alerter
+        from .compliance import PreTradeCompliance
+        self.audit = AuditLog(config.get("audit_path", default="data/audit.jsonl"))
+        self.alerter = Alerter(
+            config.secrets.alert_webhook_url,
+            telegram_token=config.secrets.alert_telegram_bot_token,
+            telegram_chat_id=config.secrets.alert_telegram_chat_id,
+        )
+        # Startup self-test: one message on boot so a misconfigured channel is
+        # discovered immediately, not during the first real emergency. Delivery
+        # failures land in the logs with the provider's error description.
+        if self.alerter.enabled:
+            channels = [c for c, on in (
+                ("webhook", bool(config.secrets.alert_webhook_url)),
+                ("telegram", bool(config.secrets.alert_telegram_bot_token
+                                  and config.secrets.alert_telegram_chat_id)),
+            ) if on]
+            self.alerter.send("startup", f"operator alerts online "
+                              f"({', '.join(channels)})", critical=True)
+        self.compliance = PreTradeCompliance(config)
+        self._kill_file = Path(config.get("kill_file", default="data/KILL"))
+        self._killed = False
+        self._kill_flatten = bool(config.get("risk", "kill_flatten", default=False))
+        self._halt_alerted = False
+        self._last_backup_day = None
+        self._backfilled = False    # one-time candle-history seed (slow loop)
+        # Continuous capital allocation + regime tracking + system scoreboard.
+        from ..learning.allocator import CapitalAllocator
+        alloc_cfg = config.get("learning", "allocator", default={}) or {}
+        self.allocator = CapitalAllocator(
+            floor=float(alloc_cfg.get("floor", 0.1)),
+            cap=float(alloc_cfg.get("cap", 1.5)),
+            decay=float(alloc_cfg.get("decay", 0.99)),
+            min_trades=int(alloc_cfg.get("min_trades", 15)),
+        )
+        self._vol_history: dict[str, list[float]] = {}   # symbol -> atr% per closed bar
+        self._scoreboard: dict = {}
+        # Once-per-closed-bar signal evaluation + edge-triggered emission.
+        self._last_bar: dict[tuple[str, str], object] = {}     # (symbol, tf) -> bar ts
+        self._last_emit: dict[tuple[str, str], Side] = {}      # (strategy, symbol) -> side
+        # Watermark of the newest bar persisted to the candle history store.
+        self._candle_watermark: dict[tuple[str, str], object] = {}
+        # Built FeatureSets keyed by their closed bar: (symbol, tf) -> (bar_ts,
+        # features). Indicators can't change until the next bar closes.
+        self._feat_cache: dict[tuple[str, str], tuple[object, object]] = {}
+        # Incremental status metrics: per-strategy metrics recomputed only when
+        # one of that strategy's trades closes; realized PnL kept as a running
+        # sum. Replaces ~30 DB queries per fast loop.
+        self._strategy_metrics: dict[str, dict] = {}
+        self._metrics_dirty: set[str] = {s.name for s in strategies.all()}
+        self._closed_pl: float | None = None    # seeded lazily on first status
+
+        # ── RL decision layer ─────────────────────────────────────────────────
+        # The strategies emit hard signals; the policy decides which to take and
+        # learns from the outcome of every decision. Skipped signals are filled on
+        # a private, learning-only paper broker so the policy can be graded on the
+        # PnL it *avoided* — the counterfactual the real account never sees.
+        rl_cfg = config.get("rl", default={}) or {}
+        # Offline DQN as an *advisory* signal: if enabled and a trained policy
+        # exists, the loop logs what it would do per symbol — purely observational,
+        # never gates or alters execution.
+        self._offline = None
+        self._advisory = None
+        # Guarded promotion: when enabled (dashboard toggle), the offline policy
+        # acts as an ADDITIONAL veto only — it can block a signal it disagrees
+        # with, never open or enlarge a position. Pure risk reduction.
+        self._offline_gate = bool(rl_cfg.get("offline_gate", False))
+        if rl_cfg.get("offline_advisory", False):
+            try:
+                from ..learning.advisory import AdvisoryTracker
+                from ..learning.rl.offline import OfflineDQN
+                pol = OfflineDQN()
+                if pol.load(rl_cfg.get("offline_policy_path", "data/offline_dqn.npz")):
+                    self._offline = pol
+                    log.info("Offline RL advisory policy loaded")
+                # Track advisory-vs-realized agreement even before promotion.
+                self._advisory = AdvisoryTracker(
+                    rl_cfg.get("advisory_track_path", "data/advisory_track.json"))
+                self._advisory.load()
+            except Exception as e:  # noqa: BLE001
+                log.warning("Offline advisory not loaded: %s", e)
+        # Consensus aggregation (opt-in): collapse the strategies' stances into
+        # ONE decision per symbol — conviction × allocator × RL P(take) weighted
+        # vote, family-capped, 35%-opposing veto, hysteresis. Per-strategy fills
+        # then become attribution-only shadow fills; the account trades the
+        # consensus book. Off ⇒ classic per-strategy execution, unchanged.
+        agg_cfg = config.get("aggregation", default={}) or {}
+        self._agg: SignalAggregator | None = None
+        if str(agg_cfg.get("mode", "off")).lower() == "consensus":
+            self._agg = SignalAggregator(
+                veto_opposing=float(agg_cfg.get("veto_opposing", 0.35)),
+                ema_alpha=float(agg_cfg.get("ema_alpha", 0.6)),
+                enter_threshold=float(agg_cfg.get("enter_threshold", 0.25)),
+                exit_threshold=float(agg_cfg.get("exit_threshold", 0.10)),
+                min_hold_bars=int(agg_cfg.get("min_hold_bars", 2)),
+                family_cap=float(agg_cfg.get("family_cap", 0.4)),
+            )
+            log.info("Consensus aggregation ON (veto %.0f%%, family cap %.0f%%)",
+                     self._agg.veto_opposing * 100, self._agg.family_cap * 100)
+        self.rl: RLPolicy | None = None
+        self._rl_gate = bool(rl_cfg.get("gate_signals", True))
+        self._rl_shadow_skipped = bool(rl_cfg.get("shadow_skipped", True))
+        # Confidence-scaled sizing: past warmup, P(take) shades position size
+        # DOWN toward the floor near the take threshold (never up — vet() caps
+        # stay intact). Turns the policy's learned confidence into allocation.
+        self._rl_size_scale = bool(rl_cfg.get("confidence_sizing", True))
+        self._rl_size_floor = float(rl_cfg.get("confidence_sizing_floor", 0.5))
+        self._rl_path = config.get("rl", "policy_path", default="data/rl_policy.npz")
+        self.learn_broker = PaperBroker(cost=self._paper_cost)
+        self._convergence_monitor: ConvergenceMonitor | None = None
+        if rl_cfg.get("enabled", True):
+            self.rl = self._build_rl_policy()
+            if self.rl.load(self._rl_path):
+                log.info("Loaded RL policy from %s", self._rl_path)
+            # Auto-track convergence to data/rl_convergence.jsonl
+            self._convergence_monitor = ConvergenceMonitor(
+                config.get("rl", "convergence_log", default="data/rl_convergence.jsonl")
+            )
+
+    def _build_rl_policy(self) -> RLPolicy:
+        """Construct a fresh RLPolicy from config (used at startup and on reset)."""
+        rl_cfg = self.config.get("rl", default={}) or {}
+        return RLPolicy(
+            hidden=int(rl_cfg.get("hidden", 32)),
+            lr=float(rl_cfg.get("learning_rate", 3e-3)),
+            gamma=float(rl_cfg.get("gamma", 0.95)),
+            entropy_coef=float(rl_cfg.get("entropy_coef", 0.01)),
+            buffer_size=int(rl_cfg.get("buffer_size", 5000)),
+            batch_size=int(rl_cfg.get("batch_size", 32)),
+            warmup_trades=int(rl_cfg.get("warmup_trades", 40)),
+            take_threshold=float(rl_cfg.get("take_threshold", 0.5)),
+            epsilon_start=float(rl_cfg.get("epsilon_start", 0.30)),
+            epsilon_min=float(rl_cfg.get("epsilon_min", 0.05)),
+            epsilon_decay=float(rl_cfg.get("epsilon_decay", 0.999)),
+        )
+
+    # ── fast loop ────────────────────────────────────────────────────────────
+
+    async def fast_step(self) -> None:
+        # Apply dashboard control (strategy modes + global pause) before trading.
+        self._apply_control()
+
+        # Kill switch: engaged via the data/KILL file or the dashboard. Checked
+        # before ANY order can leave. Independent of the risk breakers — this
+        # is the human's hard stop, and only the human re-arms it.
+        await self._check_kill_switch()
+
+        # Execute any manual close requests from the dashboard.
+        if self._pending_closes is not None:
+            await self._execute_manual_closes()
+            self._pending_closes = None
+
+        # Flush netted books to the account: covers manual closes and the kill
+        # flatten above immediately, and retries any symbol a failed loop left
+        # unreconciled. No-op when nothing is pending.
+        await self._reconcile_books()
+
+        # Refresh account state for the risk manager — BOTH books. The breakers
+        # must watch the book orders actually fill on: in demo/live mode with
+        # shadow strategies, the shadow book bleeding is invisible to the real
+        # account's equity (the 16h incident — 500+ losing paper trades, zero
+        # halts, because risk.equity tracked an untouched demo account).
+        from datetime import datetime, timezone
+
+        # In dry-run, broker and shadow_broker intentionally share one PaperBroker.
+        # Its equity includes shadow positions, so it cannot be used as the real
+        # book's equity. Keep the real book based on its own journal/positions.
+        if self.shadow_broker is self.broker and self._account_is_paper():
+            real_positions = [p for p in positions if p.mode == "real"]
+            real_running = sum(
+                (p.pnl if p.pnl is not None else self._unrealized(p) or 0.0)
+                for p in real_positions)
+            real_closed = sum(
+                (t.pnl or 0.0) for t in self.journal.closed(limit=5000)
+                if t.pnl is not None and t.mode == "real")
+            real_base = getattr(self, "_paper_real_base", self.risk.equity)
+            self.risk.update_book("real", real_base + real_closed + real_running)
+            self.risk.update_book("shadow", await self.shadow_broker.account_equity())
+        else:
+            self.risk.update_book("real", await self.broker.account_equity())
+            self.risk.update_book("shadow", await self.shadow_broker.account_equity())
+        # Reset the daily-drawdown baselines at each UTC session rollover (not
+        # just once at boot), so the circuit-breakers measure *today's* drawdown.
+        today = datetime.now(timezone.utc).date()
+        if self._risk_day != today or self.risk.day_start_equity == 0:
+            self.risk.roll_day()
+            self._risk_day = today
+
+        # Rebuild open exposure (symbol -> notional) so the portfolio caps actually
+        # bind. Without this the exposure/position limits read an empty dict and
+        # never trigger. Notional uses the live mark when available.
+        positions = []
+        try:
+            positions = await self.broker.open_positions()
+            exposure: dict[str, float] = {}
+            for p in positions:
+                px = p.entry_price or 0.0
+                exposure[p.symbol] = exposure.get(p.symbol, 0.0) + abs((p.volume or 0.0) * px)
+            self.risk.open_exposure = exposure
+        except Exception as e:  # noqa: BLE001 — risk refresh must not kill the loop
+            log.warning("Could not refresh open exposure: %s", e)
+
+        # Positions the broker closed on its own (stop/TP) since last loop:
+        # grade the RL decision and journal the round-trip (audit F-02).
+        for closed in self.broker.drain_closed():
+            self._record_closed_trade(closed, self._last_view.get(closed.symbol, {}))
+            if (closed.context or {}).get("exit_estimated"):
+                self.alerter.send(
+                    "reconciliation",
+                    f"{closed.symbol} closed broker-side but the closing fill could "
+                    f"not be fetched — PnL estimated from the last mark.")
+
+        # Reconciliation visibility: positions we adopted from the broker were
+        # opened outside this agent (or before a restart) — an operator should
+        # know unattributed exposure exists.
+        adopted = [p.symbol for p in positions if (p.context or {}).get("adopted")]
+        if adopted:
+            self.alerter.send("reconciliation",
+                              f"unattributed broker positions adopted: {sorted(set(adopted))}")
+
+        # Alert (once per engagement) when a drawdown breaker halts trading.
+        halted_books = [b for b in ("real", "shadow") if self.risk.trading_halted(b)]
+        if halted_books:
+            if not self._halt_alerted:
+                self._halt_alerted = True
+                self.audit.record("trading_halted", books=halted_books,
+                                  equity=self.risk.equity,
+                                  day_start=self.risk.day_start_equity,
+                                  peak=self.risk.peak_equity)
+                self.alerter.send(
+                    "halt",
+                    f"drawdown breaker engaged on {' + '.join(halted_books)} "
+                    f"book — new entries blocked (real equity "
+                    f"{self.risk.equity:,.2f}, shadow "
+                    f"{self.risk.books['shadow'].equity:,.2f}).")
+                # Optional de-risk: breakers only block ENTRIES — in the crash
+                # incident the open positions rode the whole move down after
+                # the halt. risk.halt_flatten closes the halted book's
+                # positions on engagement (once per engagement, not per loop).
+                if bool(self.config.get("risk", "halt_flatten", default=False)):
+                    await self._flatten_books(halted_books)
+        else:
+            self._halt_alerted = False
+
+        # News refresh honors data.news.poll_seconds instead of re-downloading
+        # feeds every fast loop (audit F-06).
+        now_mono = time.monotonic()
+        if not self._news or (now_mono - self._news_ts) >= self._news_poll:
+            self._news = await self.news.fetch()
+            self._news_ts = now_mono
+
+        if not self._killed:
+            active_symbols = [s for s in self.universe
+                              if s not in self._disabled_symbols]
+            # Warm the snapshot cache in 1–2 batched requests before fan-out
+            # (live feed only; paper feeds don't expose it).
+            prefetch = getattr(self.market, "prefetch_snapshots", None)
+            if prefetch is not None:
+                try:
+                    await prefetch(active_symbols)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Snapshot prefetch failed: %s", e)
+            # Symbols are independent — process them concurrently under a
+            # bounded semaphore (request pacing already serializes the wire, so
+            # concurrency overlaps latency without bursting the API). A failure
+            # in one symbol no longer aborts the rest of the iteration.
+            sem = asyncio.Semaphore(int(self.config.get(
+                "data", "market", "max_concurrent_symbols", default=8) or 1))
+
+            async def _one(sym: str) -> None:
+                async with sem:
+                    try:
+                        await self._process_symbol(sym)
+                    except Exception:  # noqa: BLE001 — isolate per-symbol failures
+                        log.exception("Symbol %s failed this loop", sym)
+
+            await asyncio.gather(*(_one(s) for s in active_symbols))
+
+        await self._write_status()
+        self.risk.save_state(self._risk_state_path)
+        self._heartbeat()
+
+    async def _check_kill_switch(self) -> None:
+        """Engage/disengage the hard stop from the KILL file or dashboard flag."""
+        ctrl_kill = bool(self.control.read().get("kill", False))
+        want_kill = ctrl_kill or self._kill_file.exists()
+        if want_kill and not self._killed:
+            self._killed = True
+            source = "file" if self._kill_file.exists() else "dashboard"
+            log.critical("KILL SWITCH ENGAGED (%s): no new orders will be placed.", source)
+            self.audit.record("kill_engaged", source=source,
+                              flatten=self._kill_flatten, equity=self.risk.equity)
+            self.alerter.send("kill", f"KILL SWITCH ENGAGED ({source}). "
+                              + ("Flattening all positions." if self._kill_flatten
+                                 else "Positions left to broker-side brackets."),
+                              critical=True)
+            if self._kill_flatten:
+                self._pending_closes = None
+                await self._execute_manual_closes()
+                self._pending_closes = None
+        elif self._killed and not want_kill:
+            self._killed = False
+            log.warning("Kill switch disengaged; trading resumes next loop.")
+            self.audit.record("kill_disengaged")
+            self.alerter.send("kill", "Kill switch disengaged — trading resumed.",
+                              critical=True)
+
+    async def _flatten_books(self, books: list[str]) -> None:
+        """Close every position on the given halted book(s) (risk.halt_flatten)."""
+        brokers: list[Broker] = []
+        if "real" in books:
+            brokers.append(self.broker)
+        if "shadow" in books and self.shadow_broker is not self.broker:
+            brokers.append(self.shadow_broker)
+        for broker in brokers:
+            try:
+                for pos in list(await broker.open_positions()):
+                    ctx = {**self._last_view.get(pos.symbol, {}),
+                           "close_reason": "halt_flatten"}
+                    await self._close(broker, pos.symbol, ctx, pos.strategy or None)
+                await broker.reconcile()
+                log.warning("Halt de-risk: flattened all positions on the "
+                            "%s broker.", "account" if broker is self.broker
+                            else "shadow")
+            except Exception as e:  # noqa: BLE001 — best-effort de-risk
+                log.error("Halt flatten failed: %s", e)
+
+    async def _execute_manual_closes(self) -> None:
+        """Close positions requested by the dashboard (journaled + RL-graded)."""
+        to_close = self._pending_closes if isinstance(self._pending_closes, list) else None
+        try:
+            positions = await self.broker.open_positions()
+            for pos in positions:
+                if to_close is None or pos.symbol in to_close:
+                    ctx = {**self._last_view.get(pos.symbol, {}), "close_reason": "manual"}
+                    await self._close(self.broker, pos.symbol, ctx, pos.strategy or None)
+                    log.info("Manually closed %s %s", pos.side, pos.symbol)
+        except Exception as e:
+            log.error("Error closing positions: %s", e)
+
+    def _apply_control(self) -> None:
+        ctrl = self.control.read()
+        for name, mode in ctrl.get("strategies", {}).items():
+            strat = self.strategies.get(name)
+            if strat is not None and mode in strat.MODES and strat.mode != mode:
+                strat.mode = mode
+                self.audit.record("strategy_mode", strategy=name, mode=mode)
+                if mode == "live":
+                    self.alerter.send("promotion", f"strategy {name} promoted to LIVE")
+        # Per-instrument on/off from the Markets tab (default on when unspecified).
+        self._disabled_symbols = {
+            sym for sym, enabled in ctrl.get("instruments", {}).items() if not enabled
+        }
+        self._paused = bool(ctrl.get("paused", False))
+        # Guarded offline-RL veto (dashboard toggle). Only meaningful when an
+        # offline policy is actually loaded.
+        self._offline_gate = bool(ctrl.get("offline_gate", self._offline_gate))
+        # Pre-trade filter toggles/params from the dashboard.
+        if "filters" in ctrl:
+            from .filters import FilterConfig
+            self._filters = FilterConfig.from_dict(ctrl.get("filters"))
+
+        # Live-tunable risk knobs from the Settings tab (only override when set).
+        rs = ctrl.get("risk_settings", {})
+        # PAPER/LIVE execution mode from the dashboard toggle. LIVE requires a
+        # real broker connection (i.e. the process didn't boot in dry-run) —
+        # there is no session to submit orders to otherwise.
+        if rs.get("PAPER_TRADE") is not None:
+            want_paper = bool(rs["PAPER_TRADE"])
+            if want_paper != self._paper_mode:
+                if not want_paper and self._account_is_paper():
+                    log.warning(
+                        "Dashboard requested LIVE mode but the agent started in "
+                        "dry-run (no broker session); staying in PAPER. Set "
+                        "agent.dry_run=false / GUNGNIR_DRY_RUN=false and restart.")
+                else:
+                    self._paper_mode = want_paper
+                    log.info("Execution mode switched to %s via dashboard",
+                             "PAPER" if want_paper else "LIVE")
+                    self.audit.record("execution_mode",
+                                      mode="paper" if want_paper else "live")
+                    if not want_paper:
+                        self.alerter.send("promotion", "execution mode switched to LIVE")
+        if rs.get("max_open_positions") is not None:
+            self.risk.max_positions = int(rs["max_open_positions"])
+        if rs.get("min_lot") is not None:
+            self.risk.min_lot = float(rs["min_lot"] or 0.0)
+        if rs.get("max_lot") not in (None, "", 0):
+            self.risk.max_lot = float(rs["max_lot"])
+        elif rs.get("max_lot") in ("", 0):
+            self.risk.max_lot = None
+        # Per-trade risk fraction (used by the fixed-fractional sizer) and the
+        # daily-loss circuit breaker — previously stored but never applied.
+        if rs.get("account_risk_per_trade") is not None and hasattr(self.sizer, "risk_per_trade"):
+            self.sizer.risk_per_trade = float(rs["account_risk_per_trade"])
+        if rs.get("daily_loss_limit") is not None:
+            self.risk.max_daily_dd = float(rs["daily_loss_limit"])
+        for key, attr in (
+            ("max_portfolio_exposure", "max_gross"),
+            ("max_per_asset_exposure", "max_per_asset"),
+            ("max_daily_drawdown", "max_daily_dd"),
+            ("max_intraday_drawdown", "max_intraday_dd"),
+            ("max_total_drawdown", "max_total_dd"),
+            ("min_confidence", "min_confidence"),
+            ("stop_atr_mult", "stop_atr_mult"),
+            ("tp_atr_mult", "tp_atr_mult"),
+            ("leverage", "leverage"),
+            ("leverage_safety_margin", "lev_safety"),
+        ):
+            if rs.get(key) is not None and hasattr(self.risk, attr):
+                setattr(self.risk, attr, float(rs[key]))
+        for key, attr in (("leverage_by_type", "leverage_by_type"),
+                          ("min_lot_by_type", "min_lot_by_type"),
+                          ("max_lot_by_type", "max_lot_by_type")):
+            val = rs.get(key)
+            if isinstance(val, dict) and hasattr(self.risk, attr):
+                setattr(self.risk, attr, {k: (None if v in (None, "") else float(v))
+                                          for k, v in val.items()})
+        if rs.get("account_risk_per_trade") is not None and hasattr(self.sizer, "risk_per_trade"):
+            self.sizer.risk_per_trade = float(rs["account_risk_per_trade"])
+        # LLM provider is hot-swappable for subsequent advisory calls. Secrets stay
+        # in the environment; only the non-secret provider name crosses control.json.
+        provider = ctrl.get("llm_provider")
+        if provider in ("anthropic", "ollama", "codex", "none"):
+            current = getattr(self.llm, "_odin_provider", None)
+            if current != provider:
+                from ..llm.client import build_llm
+                self.config.raw.setdefault("llm", {})["provider"] = provider
+                self.llm = build_llm(self.config)
+                self.llm._odin_provider = provider
+
+        # One-shot commands are consumed via clear_keys(), which re-reads the
+        # file fresh before deleting ONLY the consumed key — writing back this
+        # function's stale `ctrl` copy used to clobber any dashboard write that
+        # landed mid-loop (the lost-update race).
+
+        # Manual close requests from the dashboard. Test for the KEY, not its
+        # value: "close all" arrives as close_positions=null, which .get() can't
+        # tell apart from an absent key — so presence is the only reliable signal.
+        if "close_positions" in ctrl:
+            close_req = ctrl.get("close_positions")   # null (=all) or list of symbols
+            # null → CLOSE_ALL sentinel so the flush trigger (is not None) fires;
+            # a bare None here would collapse straight back into the idle state.
+            self._pending_closes = close_req if isinstance(close_req, list) else CLOSE_ALL
+            self.audit.record("manual_close_requested",
+                              symbols=close_req if isinstance(close_req, list) else "ALL")
+            self.control.clear_keys("close_positions")
+
+        # Reset shadow broker (paper trading history)
+        if ctrl.get("reset_shadow", False):
+            self.shadow_broker.reset()
+            log.info("Shadow broker reset")
+            self.audit.record("reset_shadow")
+            self.control.clear_keys("reset_shadow")
+
+        # Reset trade history (database)
+        if ctrl.get("reset_trades", False):
+            try:
+                counts = self.journal.db.reset_all()
+                # Invalidate the incremental status caches wholesale.
+                self._closed_pl = None
+                self._metrics_dirty = {s.name for s in self.strategies.all()}
+                self._strategy_metrics.clear()
+                log.info("Trade history reset: %s", counts)
+                self.audit.record("reset_trades", **counts)
+            except Exception as e:
+                log.error("Failed to reset trade history: %s", e)
+            self.control.clear_keys("reset_trades")
+
+        # Reset RL policy
+        if ctrl.get("reset_rl", False):
+            try:
+                import os
+                policy_path = self.config.get("rl", "policy_path", default="data/rl_policy.npz")
+                if os.path.exists(policy_path):
+                    os.remove(policy_path)
+                # Also try state file
+                state_path = f"{policy_path[:-4]}.state.npz"
+                if os.path.exists(state_path):
+                    os.remove(state_path)
+                # Reinitialize RL policy
+                if self.rl is not None:
+                    self.rl = self._build_rl_policy()
+                log.info("RL policy reset to zero")
+                self.audit.record("reset_rl")
+            except Exception as e:
+                log.error("Failed to reset RL policy: %s", e)
+            self.control.clear_keys("reset_rl")
+
+    async def _manage_exits(self, symbol: str, price: float) -> None:
+        """Close any paper position whose stop-loss or take-profit was reached."""
+        brokers = {self.shadow_broker}
+        # Netted books need agent-managed exits even live: the net position
+        # carries no broker-side brackets, so stops/TPs bind on the virtual
+        # positions here and the net shrinks on the next reconcile.
+        if isinstance(self.broker, (PaperBroker, NettingBroker)):
+            brokers.add(self.broker)
+        if self.rl is not None:
+            brokers.add(self.learn_broker)   # learning-only skip trades close here too
+        for broker in brokers:
+            # Each strategy holds its own position per symbol; check them all.
+            for pos in broker.positions_for(symbol):
+                stop = pos.context.get("stop")
+                tp = pos.context.get("tp")
+                if pos.side == Side.BUY:
+                    hit = (stop and price <= stop) or (tp and price >= tp)
+                else:
+                    hit = (stop and price >= stop) or (tp and price <= tp)
+                if hit:
+                    # Diagnostic: log why position is being closed
+                    reason = "stop-loss" if (stop and ((pos.side == Side.BUY and price <= stop) or (pos.side == Side.SELL and price >= stop))) else "take-profit"
+                    log.debug("Exit triggered for %s: %s at %.5f (entry: %.5f, stop: %s, tp: %s)",
+                             symbol, reason, price, pos.entry_price, stop, tp)
+                    await self._close(broker, symbol, self._last_view.get(symbol, {}), pos.strategy)
+
+    async def _instrument_min(self, symbol: str) -> float:
+        """Broker minimum deal size for a symbol (cached); 0 if unknown."""
+        if symbol not in self._min_deal:
+            v = None
+            try:
+                v = await self.market.min_deal_size(symbol)
+            except Exception as e:  # noqa: BLE001
+                log.debug("min_deal_size lookup failed for %s: %s", symbol, e)
+            self._min_deal[symbol] = float(v) if v else 0.0
+        return self._min_deal[symbol]
+
+    def _unrealized(self, p) -> float | None:
+        """Mark-to-market running P/L for an open position from the latest view price."""
+        mark = (self._last_view.get(p.symbol) or {}).get("price")
+        if not mark or not p.entry_price:
+            return None
+        direction = 1 if p.side == Side.BUY else -1
+        return round(direction * (mark - p.entry_price) * (p.volume or 0.0), 2)
+
+    async def _close(self, broker, symbol: str, ctx: dict, strategy: str | None = None) -> None:
+        closed = await broker.close(symbol, strategy)
+        if not closed:
+            return
+        self._record_closed_trade(closed, ctx)
+
+    def _account_is_paper(self) -> bool:
+        """True when the ultimate account is a PaperBroker (dry-run), looking
+        through the NettingBroker wrapper."""
+        return isinstance(getattr(self.broker, "account", self.broker), PaperBroker)
+
+    async def _reconcile_books(self, symbol: str | None = None) -> None:
+        """Flush netted execution to the account broker(s) — no-op un-netted."""
+        await self.broker.reconcile(symbol)
+        if self.shadow_broker is not self.broker:
+            await self.shadow_broker.reconcile(symbol)
+
+    def _vet_net_order(self, order, price: float) -> bool:
+        """Pre-trade compliance for netted LIVE orders — the hook the
+        NettingBroker calls before each net open. Same hard rules as the
+        per-strategy path; every rejection is named and audited."""
+        ok, why = self.compliance.check(order, price)
+        if ok:
+            self.compliance.count(order)
+            self.audit.record("live_net_order", symbol=order.symbol,
+                              side=order.side.value, volume=order.volume)
+            return True
+        log.warning("Compliance blocked net %s %s: %s",
+                    order.side.value, order.symbol, why)
+        self.audit.record("order_blocked_compliance", symbol=order.symbol,
+                          strategy=NET_TAG, side=order.side.value,
+                          volume=order.volume, reason=why)
+        self.alerter.send("compliance",
+                          f"blocked net {order.side.value} {order.symbol}: {why}")
+        return False
+
+    def _record_closed_trade(self, closed, ctx: dict) -> None:
+        """Grade + journal a completed round-trip (agent-closed or broker-side)."""
+        if closed.mode == "real":
+            self.audit.record(
+                "live_close", symbol=closed.symbol, strategy=closed.strategy,
+                side=closed.side.value, volume=closed.volume,
+                entry=closed.entry_price, exit=closed.exit_price, pnl=closed.pnl,
+                reason=(closed.context or {}).get("close_reason", "signal"))
+        # Grade the RL decision that opened this position (taken or skipped).
+        if self.rl is not None:
+            learned = self.rl.learn_from_trade(closed)
+            # Surface RL progress on the dashboard's Learning tab: one milestone
+            # event every 25 policy updates (per-trade rows would drown the panel).
+            if learned and self.rl.updates and self.rl.updates % 25 == 0:
+                try:
+                    rh = list(self.rl.reward_history)[-50:]
+                    avg = sum(rh) / len(rh) if rh else 0.0
+                    self.journal.record_learning_event(
+                        strategy="rl_policy",
+                        hypothesis=(f"RL policy update #{self.rl.updates}: "
+                                    f"avg reward {avg:+.3f} (last {len(rh)}), "
+                                    f"epsilon {self.rl.epsilon:.3f}"),
+                        param_updates={"updates": self.rl.updates,
+                                       "avg_reward": round(avg, 4),
+                                       "epsilon": round(self.rl.epsilon, 3)},
+                        accepted=True,
+                    )
+                except Exception as e:  # noqa: BLE001 — telemetry only
+                    log.debug("RL learning event record failed: %s", e)
+        # Learning-only (skipped) trades exist purely to give the policy a
+        # counterfactual; keep them out of the real performance journal.
+        if closed.mode != "learning":
+            if closed.pnl is not None:
+                self._cooldown.record(closed.strategy or "", closed.symbol, closed.pnl)
+                # Real account P/L is strictly real-book only. Shadow closes remain
+                # journaled for analytics but must never change the real total.
+                if closed.mode == "real" and self._closed_pl is not None:
+                    self._closed_pl += closed.pnl
+            self._metrics_dirty.add(closed.strategy or "")
+            self.journal.record(closed, context=ctx)
+            # Grade the originating signal (WIN/LOSS on the Signals tab).
+            cid = (closed.context or {}).get("client_id")
+            if cid and closed.pnl is not None:
+                try:
+                    self.journal.update_signal_outcome(cid, closed.pnl)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("signal outcome update failed: %s", e)
+
+    # ── RL helpers ─────────────────────────────────────────────────────────────
+    def _risk_amount(self, order, features) -> float:
+        """Dollar risk of a trade, used to normalize RL rewards across symbols.
+
+        Prefer the distance to the stop; fall back to one ATR, then to a small
+        fraction of equity — so a +$50 win on a tight stop and on a wide stop are
+        graded on comparable scales.
+        """
+        entry = features.last_price or 0.0
+        if order.stop_loss:
+            risk = abs(entry - order.stop_loss) * order.volume
+            if risk > 0:
+                return risk
+        if features.atr:
+            return features.atr * order.volume
+        pct = self.config.get("risk", "account_risk_per_trade", default=0.005)
+        return max(self.risk.equity, 1.0) * pct
+
+    def _portfolio_heat(self) -> float:
+        """Fraction of the open-position budget currently in use (0..1)."""
+        cap = self.config.get("risk", "max_open_positions", default=5) or 5
+        n = self.shadow_broker.position_count()
+        if self.broker is not self.shadow_broker:
+            n += self.broker.position_count()
+        return min(1.0, n / cap)
+
+    async def _open_learning_trade(self, order, decision, risk_amount: float) -> None:
+        """Paper-fill a skipped signal on the private learning broker.
+
+        It never touches a real or shadow account — its only purpose is to close
+        later (on the same stop/target) and hand the policy the counterfactual.
+        """
+        strat_name = order.client_id.split(":")[0] if order.client_id else ""
+        if self.learn_broker.position(order.symbol, strat_name) is not None:
+            return  # already tracking this strategy's counterfactual for the symbol
+        trade = await self.learn_broker.submit(order)
+        if trade and decision is not None:
+            trade.mode = "learning"
+            RLPolicy.stamp(trade, decision, risk_amount)
+
+    @staticmethod
+    def _tf_minutes(tf: str) -> int:
+        """Best-effort minutes-per-bar for a timeframe label (e.g. '5m','M5','1h','D1')."""
+        s = str(tf).strip().lower()
+        unit = 1
+        if "d" in s or "day" in s:
+            unit = 1440
+        elif "h" in s or "hour" in s:
+            unit = 60
+        digits = "".join(c for c in s if c.isdigit())
+        return (int(digits) if digits else 1) * unit
+
+    async def _daily_change(self, symbol: str, candles_by_tf: dict[str, list],
+                            last_price: float) -> float | None:
+        """Today's % move: (last_price − current day candle's open) / open × 100.
+
+        Reuses a day-resolution series if the active strategies already fetched
+        one; otherwise pulls a single day candle so the figure is always a true
+        daily move regardless of which strategies are on.
+        """
+        day_open = None
+        for tf, cs in candles_by_tf.items():
+            if self._tf_minutes(tf) >= 1440 and cs:
+                day_open = cs[-1].open      # last candle = current (open) day
+                break
+        if day_open is None:
+            try:
+                day = await self.market.recent_candles(symbol, "1d", n=2)
+                if day:
+                    day_open = day[-1].open
+            except Exception:               # noqa: BLE001 — never break the loop for a stat
+                day_open = None
+        if day_open:
+            return round((last_price - day_open) / day_open * 100, 2)
+        return None
+
+    def _boost_conviction_with_soft_signals(self, signal, sentiment, features):
+        """Blend soft signals (sentiment, prediction) into technical conviction.
+
+        Formula: final_conviction = 0.6 * technical + 0.4 * soft_signal_score
+
+        Soft signals only boost conviction, never suppress it (asymmetric).
+        If soft signals disagree with technical, conviction stays technical.
+        """
+        from copy import copy
+        signal = copy(signal)  # Don't mutate original
+
+        tech_conviction = signal.conviction
+        soft_score = 0.0
+
+        # Sentiment: bullish (>0.2) agrees with BUY, bearish (<-0.2) agrees with SELL
+        if sentiment is not None and sentiment.confidence >= 0.4:
+            is_bullish = signal.side == Side.BUY
+            sentiment_aligned = (
+                (is_bullish and sentiment.score > 0.2) or
+                (not is_bullish and sentiment.score < -0.2)
+            )
+            if sentiment_aligned:
+                # Sentiment agrees: use its confidence (0-1)
+                soft_score += sentiment.confidence * 0.5
+
+        # Prediction: if available, use its confidence
+        if features.prediction is not None and features.prediction.confidence > 0:
+            pred_agrees = (
+                (signal.side == Side.BUY and features.prediction.direction > 0) or
+                (signal.side == Side.SELL and features.prediction.direction < 0)
+            )
+            if pred_agrees:
+                soft_score += features.prediction.confidence * 0.5
+
+        # Cap soft score at 1.0
+        soft_score = min(soft_score, 1.0)
+
+        # Blend: 60% tech, 40% soft (only boost, never suppress)
+        if soft_score > 0:
+            blended = 0.6 * tech_conviction + 0.4 * soft_score
+            # Only accept if soft signals improve conviction
+            signal.conviction = max(tech_conviction, blended)
+            if signal.conviction > tech_conviction:
+                log.info(
+                    "Conviction boosted %s %s: %.2f → %.2f (soft: %.2f)",
+                    signal.symbol, signal.side.name, tech_conviction,
+                    signal.conviction, soft_score)
+
+        return signal
+
+    def _cached_sentiment(self):
+        """The current market-level sentiment (None until the first refresh)."""
+        return self._market_sent.get("sentiment")
+
+    async def _get_cached_sentiment(self, symbol: str):  # noqa: ARG002 — API compat
+        """Market-level sentiment from cache, refreshing via the LLM if stale."""
+        cached = self._market_sent
+        news_key = self._news_key()
+        now = time.monotonic()
+        fresh = (cached["sentiment"] is not None
+                 and cached["news_key"] == news_key
+                 and now - cached["ts"] < self._llm_interval)
+        if fresh:
+            return cached["sentiment"]
+        if not self.config.get("llm", "enable_sentiment", default=True):
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+            sentiment = await loop.run_in_executor(
+                self._llm_executor, llm_sentiment.score_market, self.llm, self._news)
+            # Cache only real answers: a zero-confidence fallback from a failed
+            # call must not pin the blend to technicals-only until the next TTL.
+            if sentiment is not None and sentiment.confidence > 0:
+                self._market_sent = {"ts": now, "sentiment": sentiment,
+                                     "news_key": news_key}
+            return sentiment
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _news_key(self) -> str:
+        """Cheap fingerprint of the current news set (refresh trigger)."""
+        import hashlib
+        titles = "|".join(n.title for n in self._news[:30])
+        return hashlib.sha256(titles.encode()).hexdigest()[:16]
+
+    async def _get_cached_prediction(self, symbol: str, features):
+        """Per-symbol prediction from cache or LLM (background-refreshed)."""
+        st = self._llm_state.get(symbol, {})
+        now = time.monotonic()
+        if "prediction" in st and (now - st.get("ts", 0.0)) < self._prediction_ttl:
+            return st["prediction"]
+        if not self.config.get("llm", "enable_prediction", default=True):
+            return None
+        try:
+            summary = _summarize(features)
+            loop = asyncio.get_running_loop()
+            prediction = await loop.run_in_executor(
+                self._llm_executor,
+                lambda: llm_prediction.predict(
+                    self.llm, symbol, feature_summary=summary,
+                    sentiment=self._cached_sentiment(), macro=self._macro))
+            if prediction is not None and prediction.confidence > 0:
+                st["ts"] = now
+                st["prediction"] = prediction
+                self._llm_state[symbol] = st
+            return prediction
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _refresh_llm_background(self, symbol: str, features) -> None:
+        """Kick off a background sentiment/prediction refresh for a symbol.
+
+        The fast loop must NEVER block on the LLM. Trading uses whatever is
+        cached right now; this task warms the cache for the next loop. The LLM
+        calls run on a dedicated 2-thread executor so the rate limiter's sleeps
+        can't exhaust the shared default pool (which news/reflection also use).
+        Guarded so only one refresh per symbol (and one market-sentiment
+        refresh) is in flight.
+        """
+        st = self._llm_state.get(symbol, {})
+        now = time.monotonic()
+        pred_fresh = ("prediction" in st
+                      and now - st.get("ts", 0.0) < self._prediction_ttl)
+        sent_fresh = (self._market_sent["sentiment"] is not None
+                      and self._market_sent["news_key"] == self._news_key()
+                      and now - self._market_sent["ts"] < self._llm_interval)
+        if st.get("refreshing") or (pred_fresh and sent_fresh):
+            return
+        st["refreshing"] = True
+        self._llm_state[symbol] = st
+
+        async def _do() -> None:
+            try:
+                await self._get_cached_sentiment(symbol)
+                await self._get_cached_prediction(symbol, features)
+            except Exception as e:  # noqa: BLE001 — background enrichment only
+                log.debug("LLM refresh failed for %s: %s", symbol, e)
+            finally:
+                cur = self._llm_state.get(symbol, {})
+                cur.pop("refreshing", None)
+                self._llm_state[symbol] = cur
+
+        task = asyncio.create_task(_do())
+        # Hold a reference until completion: bare create_task results can be
+        # garbage-collected mid-flight.
+        self._llm_tasks.add(task)
+        task.add_done_callback(self._llm_tasks.discard)
+
+    def _select_opens(self, active_strats: list, symbol: str,
+                      features_by_tf: dict, primary_features: object,
+                      bar_ts_by_tf: dict, fresh_tfs: set) -> set[str] | None:
+        """Which strategies may open on this symbol this bar (best conviction wins).
+
+        Several strategies can trip on the same symbol on the same bar; under
+        netting they all fold onto one net position, so acting on each just
+        churns the books with redundant paper trades. Keep the strongest few.
+
+        Returns ``None`` when no restriction applies (cap disabled, or fresh
+        edges already fit under the cap), or the set of winning strategy names.
+        Pure: this pre-pass reads ``strat.generate`` and ``_last_emit`` but never
+        mutates them — the real decide loop owns that state.
+        """
+        cap = int(self.config.get(
+            "risk", "max_opens_per_symbol_per_bar", default=1) or 0)
+        if cap <= 0:
+            return None
+        cands: list[tuple[str, float]] = []
+        for strat in active_strats:
+            if not strat.trades_symbol(symbol):
+                continue
+            tf = getattr(strat, "timeframe", self.tf)
+            if tf in bar_ts_by_tf and tf not in fresh_tfs:
+                continue
+            feats = features_by_tf.get(tf, primary_features)
+            signals = strat.generate(feats)
+            if not signals:
+                continue
+            prev_side = self._last_emit.get((strat.name, symbol))
+            for s in signals:
+                if s.side == prev_side:
+                    continue
+                cands.append((strat.name, s.conviction))
+                break                      # one fresh edge per strategy
+        if len(cands) <= cap:
+            return None                    # nothing to trim
+        cands.sort(key=lambda c: c[1], reverse=True)
+        return {name for name, _ in cands[:cap]}
+
+    async def _consensus_step(self, symbol: str, features, ctx: dict,
+                              regime: str, instrument_min: float) -> None:
+        """Trade the account once per symbol from the consensus stance book.
+
+        The per-strategy loop has already refreshed the aggregator's stances
+        (and shadow-filled every strategy for attribution). Here the smoothed,
+        family-capped vote becomes at most one account action: enter, exit, or
+        nothing. Risk vet and compliance still gate every entry — consensus
+        proposes, risk disposes.
+        """
+        assert self._agg is not None
+        pos = self.broker.position(symbol, "consensus")
+        d = self._agg.decide(symbol, pos.side if pos is not None else None)
+
+        # Surface the vote on the dashboard's symbol view.
+        view = self._last_view.get(symbol)
+        if view is not None:
+            view["consensus"] = {
+                "action": d.action, "score": d.consensus,
+                "opposing": d.opposing, "stances": d.n_stances,
+            }
+        if d.action in ("none", "hold"):
+            return
+        if d.action == "exit":
+            log.info("Consensus exit %s: score %+.2f, opposing %.0f%%",
+                     symbol, d.consensus, d.opposing * 100)
+            await self._close(self.broker, symbol, ctx, "consensus")
+            return
+
+        assert d.side is not None
+        sig = Signal(strategy="consensus", symbol=symbol, side=d.side,
+                     conviction=min(1.0, d.strength),
+                     rationale=(f"consensus {d.consensus:+.2f} from "
+                                f"{d.n_stances} stances, opposing "
+                                f"{d.opposing:.0%}"))
+        if d.action == "veto":
+            # Conflicted book — stand aside, but journal it so the Signals tab
+            # shows why nothing traded.
+            self._filter_rejects["consensus_conflict"] += 1
+            self.journal.record_signal(sig, "rejected_consensus",
+                                       features.last_price)
+            return
+
+        # d.action == "enter" — one account order in the consensus direction.
+        go_live = (not self._paper_mode and not self._account_is_paper()
+                   and any(s.mode == "live" for s in self.strategies.active()))
+        book = "real" if go_live else "shadow"
+        raw = self.sizer.size(sig, features, self.risk.equity)
+        order = self.risk.vet(sig, raw, features.last_price, features.atr,
+                              instrument_min=instrument_min, book=book)
+        if order is None:
+            self.journal.record_signal(sig, "rejected_risk", features.last_price)
+            return
+        if go_live:
+            ok, why = self.compliance.check(order, features.last_price)
+            if not ok:
+                log.warning("Compliance blocked consensus %s %s: %s",
+                            order.side.value, symbol, why)
+                self.journal.record_signal(sig, "rejected_compliance",
+                                           features.last_price)
+                self.audit.record("order_blocked_compliance", symbol=symbol,
+                                  strategy="consensus", side=order.side.value,
+                                  volume=order.volume, reason=why)
+                return
+
+        trade = await self.broker.submit(order)
+        if trade and go_live and not self._netting:
+            self.compliance.count(order)
+            self.audit.record("live_order", symbol=symbol, strategy="consensus",
+                              side=order.side.value, volume=order.volume,
+                              entry=trade.entry_price, stop=order.stop_loss,
+                              tp=order.take_profit,
+                              deal_id=(trade.context or {}).get("deal_id"))
+        if trade:
+            log.info("Consensus enter %s %s: score %+.2f from %d stances, "
+                     "opposing %.0f%%, vol %.4f", order.side.value, symbol,
+                     d.consensus, d.n_stances, d.opposing * 100, order.volume)
+            trade.mode = "real" if go_live else "shadow"
+            trade.context = {**(trade.context or {}),
+                             "confidence": round(sig.conviction, 3),
+                             "client_id": order.client_id, "regime": regime}
+            self.risk.open_exposure[symbol] = (
+                self.risk.open_exposure.get(symbol, 0.0)
+                + abs((order.volume or 0.0) * features.last_price))
+        self.journal.record_signal(
+            sig, "real" if go_live else "shadow", features.last_price,
+            lot=order.volume, take_profit=order.take_profit,
+            stop_loss=order.stop_loss, client_id=order.client_id)
+
+    async def _process_symbol(self, symbol: str) -> None:
+        # Collect unique timeframes from active strategies
+        active_strats = self.strategies.active()
+        if not active_strats:
+            return
+
+        timeframes = set()
+        for strat in active_strats:
+            tf = getattr(strat, "timeframe", self.tf)
+            timeframes.add(tf)
+
+        # Fetch candles for every timeframe concurrently (was sequential — the
+        # main reason a multi-symbol fast loop couldn't finish in its interval).
+        # n=250 so 200-period indicators (CCI/EMA 200, SMA 144) actually warm up.
+        async def _fetch(tf: str):
+            return tf, await self.market.recent_candles(symbol, tf, n=250)
+
+        fetched = await asyncio.gather(*[_fetch(tf) for tf in timeframes],
+                                       return_exceptions=True)
+        candles_by_tf: dict[str, list] = {}
+        for r in fetched:
+            if isinstance(r, Exception):
+                log.warning("Candle fetch failed for %s: %s", symbol, r)
+                continue
+            tf, candles = r
+            if candles:
+                candles_by_tf[tf] = candles
+
+        if not candles_by_tf:
+            return
+
+        primary_tf = next(iter(candles_by_tf))
+        primary_candles = candles_by_tf[primary_tf]
+        book = await self.market.orderbook(symbol, self.depth)
+
+        # Stale-data guard (audit F-10): if the freshest primary candle is more
+        # than 3 bars old, the market is closed or the feed is broken — keep
+        # marking/exits running but don't act on decayed signals.
+        stale = False
+        last_ts = primary_candles[-1].ts if primary_candles else None
+        if last_ts is not None:
+            if last_ts.tzinfo is None:
+                from datetime import timezone as _tz
+                last_ts = last_ts.replace(tzinfo=_tz.utc)
+            from datetime import datetime as _dt, timezone as _tz2
+            age = (_dt.now(_tz2.utc) - last_ts).total_seconds()
+            if age > 3 * self._tf_minutes(primary_tf) * 60:
+                stale = True
+                log.debug("%s data is stale (%.0fs old); skipping signal generation", symbol, age)
+
+        # ── Fetch cached sentiment/prediction (lazy LLM calls defer until signal fires) ────
+        # Use cached values if available to enrich features for the dashboard.
+        # Expensive LLM calls are deferred until a signal actually fires (signal gates).
+        cached_sentiment = self._cached_sentiment()          # market-level
+        cached_prediction = self._llm_state.get(symbol, {}).get("prediction")
+
+        # ── Build features with cached sentiment/prediction ──────────────────────────
+        # Signals evaluate on CLOSED bars only (audit F-14): if the newest bar's
+        # interval hasn't elapsed yet it is still forming — level-based rules
+        # would trigger and un-trigger on intra-bar noise. If the feed only ever
+        # returns completed bars, this drops nothing.
+        from datetime import datetime as _now_dt, timezone as _now_tz
+        _now = _now_dt.now(_now_tz.utc)
+        features_by_tf: dict[str, feature_store.KrakenFeatureSet] = {}
+        bar_ts_by_tf: dict[str, object] = {}   # newest CLOSED bar per tf
+        for tf, candles in candles_by_tf.items():
+            sig_candles = candles
+            if len(candles) >= 2 and candles[-1].ts is not None:
+                c_ts = candles[-1].ts
+                if c_ts.tzinfo is None:
+                    c_ts = c_ts.replace(tzinfo=_now_tz.utc)
+                if (_now - c_ts).total_seconds() < self._tf_minutes(tf) * 60:
+                    sig_candles = candles[:-1]
+            bar_ts = sig_candles[-1].ts if sig_candles else None
+            bar_ts_by_tf[tf] = bar_ts
+            # Accumulate closed bars into the local history store — the
+            # validation backbone for walk-forward gating (only bars newer
+            # than the last stored one; INSERT OR IGNORE dedupes restarts).
+            try:
+                wm_key = (symbol, tf)
+                wm = self._candle_watermark.get(wm_key)
+                fresh_bars = [c for c in sig_candles if wm is None or c.ts > wm]
+                if fresh_bars:
+                    self.journal.db.store_candles(fresh_bars)
+                    self._candle_watermark[wm_key] = fresh_bars[-1].ts
+            except Exception as e:  # noqa: BLE001 — history is best-effort
+                log.debug("candle store failed for %s/%s: %s", symbol, tf, e)
+            # Indicators are functions of CLOSED bars — identical until a new
+            # bar closes. Rebuilding ~35 indicator arrays per symbol×tf every
+            # 30s loop was the dominant CPU cost; reuse the cached set and
+            # refresh only the advisory fields (book/sentiment/prediction).
+            cached_feat = self._feat_cache.get((symbol, tf))
+            if cached_feat is not None and bar_ts is not None and cached_feat[0] == bar_ts:
+                feats = cached_feat[1]
+                feats.orderbook = feature_store.analyze(book) if book else None
+                feats.sentiment = cached_sentiment
+                feats.prediction = cached_prediction
+            else:
+                feats = feature_store.build_kraken(
+                    symbol, sig_candles, book=book, sentiment=cached_sentiment,
+                    prediction=cached_prediction, macro=self._macro)
+                if bar_ts is not None:
+                    self._feat_cache[(symbol, tf)] = (bar_ts, feats)
+            features_by_tf[tf] = feats
+        primary_features = features_by_tf[primary_tf]
+
+        # Which timeframes have a NEW closed bar since the last evaluation?
+        # Signals are decided once per closed bar — features can't change
+        # within a bar, so re-running strategies every 30s only re-emitted
+        # the same level-based signal (churn the learning layers then had
+        # to model). Marking/exits below still run every loop on live ticks.
+        fresh_tfs = {
+            tf for tf, ts in bar_ts_by_tf.items()
+            if ts is not None and self._last_bar.get((symbol, tf)) != ts
+        }
+
+        # ── Regime classification (trend × relative volatility) ─────────────
+        # ATR% history advances once per closed primary bar; the percentile is
+        # always relative to this symbol's own recent behaviour.
+        from . import regime as regime_mod
+        vh = self._vol_history.setdefault(symbol, [])
+        atr_pct = (primary_features.atr / primary_features.last_price
+                   if primary_features.last_price else 0.0)
+        if primary_tf in fresh_tfs and atr_pct > 0:
+            vh.append(atr_pct)
+            if len(vh) > 500:
+                del vh[: len(vh) - 500]
+        regime = regime_mod.classify(
+            getattr(primary_features, "adx", 0.0),
+            regime_mod.vol_percentile(vh[:-1] if len(vh) > 1 else vh, atr_pct))
+
+        # Publish a compact view of this symbol for the dashboard.
+        view = _summarize(primary_features)
+        if primary_features.prediction:
+            view["prediction_dir"] = primary_features.prediction.direction
+            view["prediction_conf"] = round(primary_features.prediction.confidence, 2)
+        view["regime"] = regime
+        # Publish cached sentiment to dashboard (confidence included so a
+        # "no boost" can be diagnosed: the blend needs confidence >= 0.4).
+        if cached_sentiment:
+            view["sentiment_score"] = round(cached_sentiment.score, 2)
+            view["sentiment_conf"] = round(cached_sentiment.confidence, 2)
+        # Daily change % = current price − open of the current (still-open) day
+        # candle, over its open. Used by the Discover wheels and Risers/Fallers.
+        view["change_pct"] = await self._daily_change(
+            symbol, candles_by_tf, primary_features.last_price)
+        # Offline RL advisory (observational only — does not affect execution).
+        if self._offline is not None:
+            try:
+                from ..learning.rl.offline import recommend
+                _, label = recommend(self._offline, primary_features)
+                view["offline_action"] = label
+                # Grade the previous advisory for this symbol against the move since.
+                if self._advisory is not None:
+                    self._advisory.record(
+                        symbol, label, primary_features.last_price,
+                        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+            except Exception as e:  # noqa: BLE001
+                log.debug("offline advisory failed for %s: %s", symbol, e)
+        self._last_view[symbol] = view
+
+        # Mark every broker with the latest available price (preferring tick over candle).
+        # Tick prices update more frequently than candles, preventing same-price opens/closes.
+        mark_price = primary_features.last_price
+        try:
+            tick = await self.market.latest_tick(symbol)
+            if tick:
+                # Use midpoint between bid/ask from latest tick
+                mark_price = (tick.bid + tick.ask) / 2.0
+                log.debug("Marking %s with tick: bid=%.5f, ask=%.5f, mid=%.5f",
+                         symbol, tick.bid, tick.ask, mark_price)
+        except Exception as e:  # noqa: BLE001 — tick fetch failure doesn't break exit management
+            log.debug("Tick fetch failed for %s: %s, using candle close", symbol, e)
+
+        # Every broker exposes mark() now (no-op where irrelevant), so live PnL
+        # estimates work without isinstance branching.
+        self.broker.mark(symbol, mark_price)
+        self.shadow_broker.mark(symbol, mark_price)
+        if self.rl is not None:
+            self.learn_broker.mark(symbol, mark_price)
+
+        # Publish the live mark (tick-preferred) and its capture time so the
+        # dashboard can show a genuinely live price + an "updated Xs ago"
+        # freshness indicator, separate from the closed-bar `price` above.
+        from datetime import datetime as _q_dt, timezone as _q_tz
+        _v = self._last_view.get(symbol)
+        if _v is not None:
+            _v["live_price"] = round(mark_price, 6)
+            _v["quote_ts"] = _q_dt.now(_q_tz.utc).isoformat()
+
+        # Exit management: close paper positions whose stop/target was hit.
+        await self._manage_exits(symbol, mark_price)
+
+        # Stale market data: keep exits managed (above) but generate no new
+        # signals on decayed prices (audit F-10). Exits may have shrunk the
+        # net — flush before leaving.
+        if stale:
+            await self._reconcile_books(symbol)
+            return
+
+        ctx = _summarize(primary_features)
+        instrument_min = await self._instrument_min(symbol)   # broker min deal size
+
+        # Best-signal gate: when several strategies fire on this symbol this bar,
+        # only the strongest may open — the rest net onto the same position and
+        # would just churn the books. `None` ⇒ no restriction this bar.
+        # Consensus mode replaces this: every stance must reach the vote, and
+        # per-strategy fills are attribution-only shadow fills anyway.
+        allowed_opens = None if self._agg is not None else self._select_opens(
+            active_strats, symbol, features_by_tf, primary_features,
+            bar_ts_by_tf, fresh_tfs)
+
+        # Decide → record → size → risk-gate → execute (real or shadow).
+        for strat in active_strats:
+            # Respect the strategy's configured symbol scope (audit F-12 — the
+            # symbols: lists in strategies.yaml were previously ignored).
+            if not strat.trades_symbol(symbol):
+                continue
+            # Use features from the strategy's assigned timeframe
+            tf = getattr(strat, "timeframe", self.tf)
+            if tf in bar_ts_by_tf and tf not in fresh_tfs:
+                continue    # this bar was already decided; nothing new to say
+            features = features_by_tf.get(tf, primary_features)
+
+            # Edge-triggered emission: the strategies are level-based (they
+            # emit while a condition holds). Act only on the bar where a side
+            # first appears; repeats are suppressed until the condition
+            # releases or flips. One condition ⇒ one trade, not one per bar.
+            signals = strat.generate(features)
+            emit_key = (strat.name, symbol)
+            prev_side = self._last_emit.get(emit_key)
+            if not signals:
+                self._last_emit.pop(emit_key, None)   # released → next cross is fresh
+                if self._agg is not None:
+                    self._agg.clear_stance(symbol, strat.name)   # stops voting
+                continue
+            self._last_emit[emit_key] = signals[-1].side
+            for signal in signals:
+                if signal.side == prev_side:
+                    continue
+                # Duplicate open on this symbol/bar — a stronger strategy already
+                # won the slot; log it for attribution and move on.
+                if allowed_opens is not None and strat.name not in allowed_opens:
+                    self._filter_rejects["duplicate"] += 1
+                    self.journal.record_signal(signal, "rejected_duplicate",
+                                               features.last_price)
+                    continue
+                self._latest_signal = {
+                    "best_trade": {
+                        "confidence": signal.conviction,
+                        "direction": signal.side.value,
+                        "symbol": signal.symbol,
+                        "strategy_name": strat.name,
+                        "ts": signal.ts.isoformat(),
+                    },
+                    "analysis": signal.rationale,
+                }
+                if self._paused:
+                    self.journal.record_signal(signal, "rejected_paused", features.last_price)
+                    continue
+
+                # Loss-streak cooldown: a strategy that just got stopped out N
+                # times in a row on this symbol is fighting the tape (the
+                # counter-trend re-entry loop of the crash incident) — bench it
+                # instead of letting it re-enter every bar all the way down.
+                wait = self._cooldown.blocked_seconds(strat.name, symbol)
+                if wait > 0:
+                    self._filter_rejects["cooldown"] += 1
+                    self.journal.record_signal(signal, "rejected_cooldown",
+                                               features.last_price)
+                    continue
+
+                # Guarded offline-RL veto (toggle): block a signal whose direction
+                # the offline policy disagrees with. Veto-only — it can never open
+                # or enlarge a position, so it can only reduce risk.
+                if self._offline_gate and self._offline is not None:
+                    want = ("LONG" if signal.side == Side.BUY else
+                            "SHORT" if signal.side == Side.SELL else "FLAT")
+                    if view.get("offline_action") not in (want,):
+                        self.journal.record_signal(signal, "rejected_offline", features.last_price)
+                        continue
+
+                # Pre-trade context filters (trend/vol/volume/session/spread/
+                # regime) — veto-only; each is independently toggled.
+                ok, why = filters.apply(signal, features, strat.name, self._filters, symbol)
+                if not ok:
+                    self._filter_rejects[why] += 1
+                    self.journal.record_signal(signal, f"rejected_{why}", features.last_price)
+                    continue
+
+                # ──Smart filtering: sentiment-based market regime veto (Phase 1) ────────
+                # Cache-only in the hot path: a firing signal schedules a background
+                # LLM refresh, but trading never waits on it. Until the cache warms
+                # (first ~minute per symbol), sentiment is None → filter passes and
+                # the blend is technicals-only.
+                self._refresh_llm_background(symbol, features)
+                sentiment = self._cached_sentiment()
+                ok, why = filters.market_regime_filter(signal, sentiment)
+                if not ok:
+                    self.journal.record_signal(signal, f"rejected_{why}", features.last_price)
+                    continue
+
+                # ──Blend soft signals into conviction (60% tech + 40% soft) ────────────
+                # Soft signals (sentiment, prediction) boost conviction when they align.
+                # This makes signal quality multisource: not just technical indicators.
+                signal = self._boost_conviction_with_soft_signals(signal, sentiment, features)
+                # Journaled alongside every record below so the Signals tab can
+                # show the soft context each decision was made with.
+                sent_score = round(sentiment.score, 3) if sentiment else None
+
+                # Live only when the strategy is live AND the runtime mode is live
+                # (config dry_run at boot, flippable from the dashboard) AND the
+                # real broker is connected; otherwise it's a shadow trade.
+                # Decided before vet() so the order is gated by the drawdown
+                # breakers of the book it will actually fill on.
+                # Consensus mode: individual strategies never trade the account —
+                # their fills are attribution-only (journal/allocator/RL); the
+                # account is traded once per symbol by the consensus book.
+                go_live = (
+                    strat.mode == "live"
+                    and not self._paper_mode
+                    and not self._account_is_paper()
+                    and self._agg is None
+                )
+                book = "real" if go_live else "shadow"
+
+                raw = self.sizer.size(signal, features, self.risk.equity)
+                # Scale position size based on signal-sentiment alignment (Phase 1)
+                raw = self.risk.scale_with_sentiment(raw, signal, sentiment)
+                # Continuous capital allocation: shift size toward what this
+                # strategy has recently earned in this regime (0.1x..1.5x,
+                # neutral 1.0 while evidence is thin). Applied before vet(),
+                # so it can never enlarge past the risk caps.
+                raw *= self.allocator.weight(strat.name, regime)
+                order = self.risk.vet(signal, raw, features.last_price, features.atr,
+                                      instrument_min=instrument_min, book=book)
+                if order is None:
+                    self.journal.record_signal(signal, "rejected_risk", features.last_price,
+                                               sentiment=sent_score)
+                    continue
+
+                # RL gate: let the policy decide whether this signal is worth taking.
+                decision = None
+                risk_amount = self._risk_amount(order, features)
+                # Consensus vote: a signal that survived every per-signal gate
+                # earns a stance. Weight folds in the LLM-blended conviction and
+                # the allocator's regime edge; RL P(take) multiplies in below
+                # once computed (soft weighting, not a hard gate on the vote).
+                if self._agg is not None:
+                    self._agg.set_stance(
+                        symbol, strat.name, signal.side,
+                        signal.conviction * self.allocator.weight(strat.name, regime),
+                        family=getattr(strat, "family", "") or strat.name)
+                if self.rl is not None:
+                    # Live signals never coin-flip: epsilon exploration is
+                    # restricted to shadow fills, where its cost is paper.
+                    decision = self.rl.decide(signal, features,
+                                              self._portfolio_heat(),
+                                              explore=not go_live, regime=regime)
+                    if self._agg is not None:
+                        # Refresh the stance with P(take) folded in.
+                        self._agg.set_stance(
+                            symbol, strat.name, signal.side,
+                            signal.conviction
+                            * self.allocator.weight(strat.name, regime)
+                            * decision.confidence,
+                            family=getattr(strat, "family", "") or strat.name)
+                    # Store RL confidence in latest_signal for dashboard display
+                    if self._latest_signal and "best_trade" in self._latest_signal:
+                        self._latest_signal["best_trade"]["rl_confidence"] = round(decision.confidence, 3)
+                    # Collapse alarm (audit F-15): a gating policy that skips
+                    # ~everything has found the degenerate equilibrium — say so
+                    # loudly (throttled) instead of going silently dark.
+                    rate = self.rl.recent_take_rate
+                    if (self._rl_gate and not self.rl.warming_up and rate is not None
+                            and rate < 0.05
+                            and time.monotonic() - self._rl_alarm_ts > 300):
+                        self._rl_alarm_ts = time.monotonic()
+                        log.warning(
+                            "RL policy is skipping %.0f%% of recent signals — likely "
+                            "collapse to all-skip. Consider raising rl.entropy_coef / "
+                            "rl.epsilon_min or resetting the policy.", (1 - rate) * 100)
+                        self.alerter.send(
+                            "rl-collapse",
+                            f"RL gate is skipping {round((1 - rate) * 100)}% of recent "
+                            "signals — policy has likely collapsed to all-skip.")
+                    take = decision.take if self._rl_gate else True
+                    if not take:
+                        # Skipped — fill it learning-only so the policy can later be
+                        # graded on the PnL it avoided, then move on.
+                        self.journal.record_signal(signal, "rejected_rl", features.last_price,
+                                                   sentiment=sent_score,
+                                                   rl_p=round(decision.confidence, 3))
+                        if self._rl_shadow_skipped:
+                            await self._open_learning_trade(order, decision, risk_amount)
+                        continue
+
+                    # Confidence-scaled sizing: a taken signal near the take
+                    # threshold trades at the floor fraction; full conviction
+                    # trades full size. Down-only, so every vet() cap holds;
+                    # skipped during warmup where P(take) is still noise.
+                    if self._rl_size_scale and not self.rl.warming_up:
+                        thr = self.rl.take_threshold
+                        edge = (decision.confidence - thr) / max(1e-9, 1.0 - thr)
+                        scale = (self._rl_size_floor
+                                 + (1.0 - self._rl_size_floor) * min(max(edge, 0.0), 1.0))
+                        scaled = round(order.volume * scale, 4)
+                        if instrument_min:
+                            # vet() guaranteed volume ≥ the broker minimum; keep it so.
+                            scaled = max(scaled, instrument_min)
+                        if scaled < order.volume:
+                            order.volume = scaled
+                            # Risk normalization must match the size actually traded.
+                            risk_amount = self._risk_amount(order, features)
+
+                broker = self.broker if go_live else self.shadow_broker
+                mode = "real" if go_live else "shadow"
+
+                # Don't stack: if THIS strategy already has a position on this
+                # symbol, either ignore (same direction) or close it first
+                # (opposite direction). Positions are per-strategy on every
+                # broker now — this check previously skipped the live broker
+                # entirely, so a persistent signal submitted a fresh real order
+                # every fast loop (audit F-03).
+                existing = broker.position(symbol, strat.name)
+                if existing is not None:
+                    if existing.side == signal.side:
+                        self.journal.record_signal(
+                            signal, mode, features.last_price, sentiment=sent_score,
+                            rl_p=(round(decision.confidence, 3) if decision else None))
+                        continue
+                    await self._close(broker, symbol, ctx, strat.name)
+
+                # Pre-trade compliance: the last gate before a LIVE order
+                # leaves. Hard rules (restricted list, notional cap, daily
+                # order budget) — every rejection is named and audited.
+                if go_live:
+                    ok, why = self.compliance.check(order, features.last_price)
+                    if not ok:
+                        log.warning("Compliance blocked %s %s: %s",
+                                    order.side.value, symbol, why)
+                        self.journal.record_signal(signal, "rejected_compliance",
+                                                   features.last_price)
+                        self.audit.record("order_blocked_compliance",
+                                          symbol=symbol, strategy=strat.name,
+                                          side=order.side.value,
+                                          volume=order.volume, reason=why)
+                        self.alerter.send("compliance",
+                                          f"blocked {order.side.value} {symbol} "
+                                          f"({strat.name}): {why}")
+                        continue
+
+                # Open the position (recorded only when it later closes, as a
+                # complete round-trip with realized PnL). `mode` rides on the
+                # position object through to close.
+                trade = await broker.submit(order)
+                # Netted execution: this fill was virtual — the actual live
+                # order is the net one, counted and audited in _vet_net_order.
+                if trade and go_live and not self._netting:
+                    self.compliance.count(order)
+                    self.audit.record(
+                        "live_order", symbol=symbol, strategy=strat.name,
+                        side=order.side.value, volume=order.volume,
+                        entry=trade.entry_price, stop=order.stop_loss,
+                        tp=order.take_profit,
+                        deal_id=(trade.context or {}).get("deal_id"))
+                if trade:
+                    log.debug("Opened %s: entry=%.5f, stop=%.5f, tp=%.5f, volume=%.4f",
+                             symbol, trade.entry_price, order.stop_loss or 0, order.take_profit or 0, order.volume)
+                    trade.mode = mode
+                    # Stamp confidence + a link id so the trade carries its origin
+                    # signal's conviction (Trades tab) and can grade it on close.
+                    trade.context = {**(trade.context or {}),
+                                     "confidence": round(signal.conviction, 3),
+                                     "client_id": order.client_id,
+                                     "regime": regime}
+                    # Track exposure intra-loop so the position/exposure caps bind
+                    # *within* a loop, not just at the next loop's refresh. Only the
+                    # active account broker consumes the real exposure budget;
+                    # shadow/learning fills do not. (Conservative: not decremented on
+                    # intra-loop closes — the loop-start refresh corrects any drift.)
+                    if broker is self.broker:
+                        self.risk.open_exposure[symbol] = (
+                            self.risk.open_exposure.get(symbol, 0.0)
+                            + abs((order.volume or 0.0) * features.last_price))
+                    if self.rl is not None and decision is not None:
+                        # Stamp the decision so the close can grade it as a TAKE.
+                        decision.action = TAKE
+                        RLPolicy.stamp(trade, decision, risk_amount)
+                # Record the executed signal with its recommended sizing/brackets
+                # and a link id, so the Signals tab can show lot/TP/SL and later a
+                # WIN/LOSS once the resulting trade closes.
+                self.journal.record_signal(
+                    signal, mode, features.last_price,
+                    lot=order.volume, take_profit=order.take_profit,
+                    stop_loss=order.stop_loss, client_id=order.client_id,
+                    sentiment=sent_score,
+                    rl_p=(round(decision.confidence, 3) if decision else None))
+
+        # Consensus mode: one decision per symbol from the assembled stance
+        # book. Only on fresh-bar passes — the vote can't change mid-bar.
+        if self._agg is not None and fresh_tfs:
+            await self._consensus_step(symbol, primary_features, ctx, regime,
+                                       instrument_min)
+
+        # Mark these bars as decided only after every strategy ran on them.
+        for tf in fresh_tfs:
+            self._last_bar[(symbol, tf)] = bar_ts_by_tf.get(tf)
+
+        # Net this symbol's virtual books into the account: the whole loop's
+        # opens/closes/flips collapse into at most one close + one open here.
+        await self._reconcile_books(symbol)
+
+    # ── slow loop ────────────────────────────────────────────────────────────
+
+    async def slow_step(self) -> None:
+        # One-time candle backfill so the walk-forward gate (which needs ~300
+        # stored bars per symbol/timeframe) works from the first week, not the
+        # third. Paced by the session's request pacing; runs in the slow loop.
+        if not self._backfilled:
+            self._backfilled = True
+            await self._backfill_candles()
+
+        # Refresh macro on the slow cadence.
+        self._macro = await self.macro.fetch()
+        # Learn: reflect + optimize per strategy, gated by the evaluator.
+        # Runs in a worker thread: reflection can make rate-limited LLM calls
+        # that sleep between requests, which would otherwise freeze the event
+        # loop (and the fast trading loop with it) for minutes (audit F-06).
+        if self.config.get("llm", "enable_reflection", default=True):
+            # reflection_mode can be overridden via dashboard control file
+            ctrl = self.control.read()
+            reflection_mode = (ctrl.get("learning") or {}).get("reflection_mode")
+
+            def _run_reflection() -> None:
+                # SQLite connections are bound to their creating thread — the
+                # worker opens its own (same pattern as the dashboard) instead
+                # of borrowing the fast loop's journal connection.
+                from ..persistence.db import Database
+                db = Database(self.config.get("persistence", "db_path",
+                                              default="data/gungnir.db"))
+                try:
+                    reflection_pipeline.run(self.config, self.llm,
+                                            self.strategies, Journal(db),
+                                            reflection_mode)
+                finally:
+                    db.close()
+
+            await asyncio.to_thread(_run_reflection)
+        # Track RL convergence: log snapshot and check for divergence.
+        if self.rl and self._convergence_monitor:
+            self._convergence_monitor.record(self.rl.snapshot())
+            is_diverging, reason = self._convergence_monitor.check_divergence()
+            if is_diverging:
+                log.warning("RL DIVERGENCE: %s", reason)
+                self.alerter.send("rl_divergence", f"RL divergence: {reason}", critical=False)
+        # Demote strategies with a sustained, well-sampled negative edge so they
+        # stop polluting the live account / shadow stream (audit F-16).
+        self._auto_demote()
+        # Sizer health: when most vetted orders come out cap-cut, the sizing
+        # chain upstream (conviction, allocator, sentiment) is being erased.
+        stats = self.risk.cap_stats
+        if stats["total"] >= 20 and stats["capped"] / stats["total"] > 0.5:
+            log.warning(
+                "Cap saturation: %d/%d vetted orders were cut by the risk caps — "
+                "the sizer is asking for more than the caps allow; position "
+                "sizes are cap-driven, not conviction-driven. Check "
+                "risk.vol_target_annual / account_risk_per_trade.",
+                stats["capped"], stats["total"])
+            self.alerter.send("cap-saturation",
+                              f"{stats['capped']}/{stats['total']} orders cap-cut "
+                              "— sizing chain is saturated.")
+        # Re-weight capital from the freshest evidence, then measure the book.
+        self.allocator.refresh(self.journal)
+        try:
+            from ..learning import scoreboard
+            self._scoreboard = scoreboard.compute(self.journal)
+        except Exception as e:  # noqa: BLE001 — measurement must not break the loop
+            log.warning("Scoreboard computation failed: %s", e)
+        # Retention: rejected-signal telemetry older than the window is pruned so
+        # the one unbounded table stays bounded (executed/graded signals kept).
+        try:
+            days = int(self.config.get("persistence", "signals_retention_days",
+                                       default=90) or 0)
+            pruned = self.journal.db.prune_signals(days)
+            if pruned:
+                log.info("Pruned %d rejected signals older than %dd", pruned, days)
+        except Exception as e:  # noqa: BLE001 — maintenance must not break the loop
+            log.warning("Signal pruning failed: %s", e)
+        self._maybe_backup()
+        self._maybe_daily_report()
+        self._maybe_weekly_report()
+        self.persist()
+
+    async def _backfill_candles(self, bars: int = 600) -> None:
+        """Seed the candle history store for every active (symbol, timeframe)."""
+        tfs = {getattr(s, "timeframe", self.tf) for s in self.strategies.active()}
+        stored = 0
+        for symbol in self.universe:
+            if symbol in self._disabled_symbols:
+                continue
+            for tf in tfs:
+                try:
+                    if self.journal.db.candle_count(symbol, tf) >= 300:
+                        continue
+                    candles = await self.market.recent_candles(symbol, tf, n=bars)
+                    if len(candles) >= 2:
+                        # Last bar is usually still forming — store closed only.
+                        stored += self.journal.db.store_candles(candles[:-1])
+                except Exception as e:  # noqa: BLE001 — backfill is best-effort
+                    log.debug("Backfill failed for %s/%s: %s", symbol, tf, e)
+        if stored:
+            log.info("Backfilled %d candles into the validation history store",
+                     stored)
+
+    def _maybe_backup(self) -> None:
+        """Daily disaster-recovery snapshot: journal DB (via SQLite backup API,
+        safe on a live connection) + RL policy files into data/backups/<date>/,
+        keeping the newest 7 days."""
+        from datetime import datetime, timezone
+        import shutil
+        import sqlite3
+        today = datetime.now(timezone.utc).date()
+        if self._last_backup_day == today:
+            return
+        try:
+            root = Path("data/backups")
+            dest = root / today.isoformat()
+            dest.mkdir(parents=True, exist_ok=True)
+            dst = sqlite3.connect(str(dest / "gungnir.db"))
+            try:
+                self.journal.db.conn.backup(dst)
+            finally:
+                dst.close()
+            for extra in (Path(self._rl_path),
+                          Path(self._rl_path).with_suffix(".state.npz")):
+                if extra.exists():
+                    shutil.copy2(extra, dest / extra.name)
+            # Rotate: keep the newest 7 daily folders.
+            days = sorted((d for d in root.iterdir() if d.is_dir()), reverse=True)
+            for old in days[7:]:
+                shutil.rmtree(old, ignore_errors=True)
+            self._last_backup_day = today
+            log.info("Backup written to %s", dest)
+            self.audit.record("backup", path=str(dest))
+        except Exception as e:  # noqa: BLE001 — backups must not break the loop
+            log.warning("Backup failed: %s", e)
+
+    def _maybe_daily_report(self) -> None:
+        """Daily performance digest to Telegram/alert channels.
+
+        The same per-strategy / per-instrument breakdown the dashboard's
+        Reports tab shows, plus a plain-language summary — so the operator gets
+        the day's book on their phone without opening the console. Sends once
+        per UTC day (marker file survives restarts). Disable with
+        reporting.daily_summary: false.
+        """
+        if not self.config.get("reporting", "daily_summary", default=True):
+            return
+        from datetime import datetime, timezone
+        marker = Path("data/last_daily_report")
+        today = datetime.now(timezone.utc).date()
+        try:
+            if marker.exists() and marker.read_text().strip() == today.isoformat():
+                return
+        except OSError:
+            pass
+        try:
+            from ..learning import reports
+            report = reports.build(self.journal)
+            # Only send once there's something to report (skips empty boot days).
+            if report["daily"]["trades"] == 0 and report["weekly"]["trades"] == 0:
+                return
+            verdict = (self._scoreboard or {}).get("verdict")
+            msg = reports.format_telegram(report, equity=self.risk.equity,
+                                          verdict=verdict)
+            self.alerter.send("daily_report", msg)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(today.isoformat())
+            self.audit.record("daily_report",
+                              trades=report["daily"]["trades"],
+                              pnl=report["daily"]["pnl"])
+        except Exception as e:  # noqa: BLE001 — reporting must not break the loop
+            log.warning("Daily report failed: %s", e)
+
+    def _maybe_weekly_report(self) -> None:
+        """Weekly operator digest, pushed via the alert channels.
+
+        Closes the oversight loop: expectancy trend, best/worst strategies,
+        allocator extremes, RL health, filter/demotion activity — so drift
+        never accumulates unseen for weeks. Sends on first run, then every 7
+        days (marker file survives restarts). Disable with
+        reporting.weekly_summary: false.
+        """
+        if not self.config.get("reporting", "weekly_summary", default=True):
+            return
+        from datetime import datetime, timedelta, timezone
+        marker = Path("data/last_weekly_report")
+        now = datetime.now(timezone.utc)
+        try:
+            if marker.exists():
+                last = datetime.fromisoformat(marker.read_text().strip())
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                if now - last < timedelta(days=7):
+                    return
+        except Exception:  # noqa: BLE001 — a corrupt marker just re-sends
+            pass
+
+        try:
+            week_ago = now - timedelta(days=7)
+
+            def _aware(dt):
+                return dt.replace(tzinfo=timezone.utc) if dt and dt.tzinfo is None else dt
+
+            closed = [t for t in self.journal.closed(limit=2000)
+                      if _aware(t.closed_at) and _aware(t.closed_at) >= week_ago]
+            m = evaluate(closed)
+            by_strat: dict[str, float] = {}
+            for t in closed:
+                if t.pnl is not None:
+                    by_strat[t.strategy or "?"] = by_strat.get(t.strategy or "?", 0.0) + t.pnl
+            ranked = sorted(by_strat.items(), key=lambda kv: kv[1], reverse=True)
+            top = ", ".join(f"{n} {p:+.0f}" for n, p in ranked[:3]) or "—"
+            bottom = ", ".join(f"{n} {p:+.0f}" for n, p in ranked[-3:][::-1]) or "—"
+
+            sb = self._scoreboard or {}
+            rl = self.rl.snapshot() if self.rl is not None else {}
+            demotions = sum(
+                1 for e in self.journal.recent_learning_events(limit=200)
+                if ("auto-demoted" in (e.get("hypothesis") or "")
+                    or "pruned" in (e.get("hypothesis") or "")))
+            vetoes = ", ".join(f"{k} {v}" for k, v in
+                               sorted(self._filter_rejects.items())) or "none"
+
+            lines = [
+                "📈 Weekly report",
+                f"Equity {self.risk.equity:,.2f} | 7d: {m.n_trades} trades, "
+                f"P&L {m.total_pnl:+,.2f}, win {m.win_rate * 100:.0f}%, "
+                f"expectancy {m.expectancy:+.2f}",
+                f"30d book: sharpe {(sb.get('current') or {}).get('sharpe', 0):+.2f}, "
+                f"verdict {sb.get('verdict', 'n/a')}",
+                f"Best: {top}",
+                f"Worst: {bottom}",
+                f"RL: {rl.get('mode', 'off')}, {rl.get('updates', 0)} updates, "
+                f"avg reward {rl.get('avg_reward', 0):+.4f}, "
+                f"take rate {rl.get('recent_take_rate')}",
+                f"Filter vetoes: {vetoes}",
+                f"Demotions/prunes (recent): {demotions}",
+            ]
+            self.alerter.send("weekly_report", "\n".join(lines))
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(now.isoformat())
+            self.audit.record("weekly_report", trades_7d=m.n_trades,
+                              pnl_7d=round(m.total_pnl, 2))
+        except Exception as e:  # noqa: BLE001 — reporting must not break the loop
+            log.warning("Weekly report failed: %s", e)
+
+    def _auto_demote(self) -> None:
+        """Learned performance pruning, evaluated each slow loop.
+
+        Two levels:
+          • strategy-level: PF < 0.5 over 50+ trades across all symbols →
+            demote (live→shadow, shadow→off);
+          • symbol-level: a still-viable strategy that has a well-sampled
+            negative edge on a specific symbol gets that symbol added to its
+            excluded_symbols blacklist (enforced by trades_symbol, persisted
+            in strategies.yaml, reversible by editing the file/dashboard).
+        """
+        from ..learning.evaluator import failing_symbols
+        prune_min = int(self.config.get("learning", "symbol_prune_min_trades", default=30))
+        prune_pf = float(self.config.get("learning", "symbol_prune_profit_factor", default=0.5))
+        demote_min = int(self.config.get("learning", "demote_min_trades", default=50))
+        demote_pf = float(self.config.get("learning", "demote_profit_factor", default=0.5))
+        for strat in self.strategies.active():
+            try:
+                closed = self.journal.closed(strategy=strat.name, limit=1000)
+                m = evaluate(closed)
+                if m.n_trades >= demote_min and m.profit_factor < demote_pf:
+                    new_mode = "shadow" if strat.mode == "live" else "off"
+                    # Write through the control channel too — _apply_control
+                    # re-applies control.json each loop and would undo a
+                    # registry-only change.
+                    self.control.set_strategy_mode(strat.name, new_mode)
+                    self.strategies.set_mode(strat.name, new_mode)
+                    log.warning("Auto-demoted %s to %s: profit factor %.2f over %d trades",
+                                strat.name, new_mode, m.profit_factor, m.n_trades)
+                    self.journal.record_learning_event(
+                        strategy=strat.name,
+                        hypothesis=(f"auto-demoted to {new_mode}: profit factor "
+                                    f"{m.profit_factor:.2f} over {m.n_trades} trades"),
+                        param_updates={"mode": new_mode},
+                        accepted=True,
+                    )
+                    continue   # demoted strategies don't need symbol pruning
+
+                # Symbol-level pruning: the strategy keeps trading, minus the
+                # symbols it has proven it loses on.
+                to_prune = [s for s in failing_symbols(closed, prune_min, prune_pf)
+                            if s not in strat.excluded_symbols]
+                for sym in to_prune:
+                    strat.excluded_symbols.append(sym)
+                    sym_trades = [t for t in closed if t.symbol == sym]
+                    sm = evaluate(sym_trades)
+                    log.warning("Pruned %s from %s: profit factor %.2f over %d trades",
+                                sym, strat.name, sm.profit_factor, sm.n_trades)
+                    self.journal.record_learning_event(
+                        strategy=strat.name,
+                        hypothesis=(f"pruned symbol {sym}: profit factor "
+                                    f"{sm.profit_factor:.2f} over {sm.n_trades} trades"),
+                        param_updates={"excluded_symbols": strat.excluded_symbols},
+                        accepted=True,
+                    )
+            except Exception as e:  # noqa: BLE001 — demotion is best-effort
+                log.debug("auto-demote check failed for %s: %s", strat.name, e)
+
+    def persist(self) -> None:
+        """Flush learned state to disk: strategy modes/params + the RL policy
+        (weights *and* training state). Called by the slow loop and on shutdown so
+        learning survives restarts rather than losing up to a slow-loop interval."""
+        try:
+            self.strategies.save()
+        except Exception as e:  # noqa: BLE001 — persistence must not crash the loop
+            log.warning("Strategy state save failed: %s", e)
+        if self.rl is not None:
+            self.rl.save(self._rl_path)
+        if self._advisory is not None:
+            self._advisory.save()
+
+    # ── status / helpers ─────────────────────────────────────────────────────
+
+    async def _write_status(self) -> None:
+        """Publish a live status snapshot for the dashboard to read.
+
+        The dashboard is a separate, read-only process; it never touches agent
+        memory. This JSON file (plus the trade journal DB) is the whole contract.
+        """
+        import json
+        import tempfile
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        try:
+            positions = await self.broker.open_positions()
+            if self.shadow_broker is not self.broker:
+                positions += await self.shadow_broker.open_positions()
+        except Exception:  # noqa: BLE001 — status must never break the trading loop
+            positions = []
+        real_positions = [p for p in positions if p.mode == "real"]
+        shadow_positions = [p for p in positions if p.mode in ("shadow", "learning")]
+        try:
+            broker_balance = await self.broker.balance()
+            broker_equity = await self.broker.account_equity()
+        except Exception:  # noqa: BLE001
+            broker_balance = broker_equity = self.risk.equity
+        real_running = round(sum(
+            (p.pnl if p.pnl is not None else self._unrealized(p) or 0.0)
+            for p in real_positions), 2)
+        shadow_running = round(sum(
+            (p.pnl if p.pnl is not None else self._unrealized(p) or 0.0)
+            for p in shadow_positions), 2)
+        if self.shadow_broker is self.broker and self._account_is_paper():
+            equity = self.risk.books["real"].equity
+            balance = round(equity - real_running, 2)
+        else:
+            equity, balance = broker_equity, broker_balance
+
+        dd = 0.0
+        if self.risk.day_start_equity > 0:
+            dd = (self.risk.day_start_equity - self.risk.equity) / self.risk.day_start_equity
+
+        running_pl = real_running
+        # Realized PnL as a running sum: seeded from the journal once, then
+        # incremented on each close — not a 1000-row scan per loop.
+        if self._closed_pl is None:
+            self._closed_pl = sum(
+                t.pnl for t in self.journal.closed(limit=5000)
+                if t.pnl is not None and t.mode == "real")
+        closed_pl = round(self._closed_pl, 2)
+        # "Executed" = signals that actually placed an order (real vs shadow).
+        counts = {"real": 0, "shadow": 0}
+        for sig in self.journal.recent_signals(limit=2000):
+            d = sig.get("disposition")
+            if d in counts:
+                counts[d] += 1
+
+        # Per-strategy performance, recomputed only for strategies whose trade
+        # set changed since the last status write (was ~30 queries per loop).
+        for name in list(self._metrics_dirty):
+            m = evaluate(self.journal.closed(strategy=name, limit=1000))
+            self._strategy_metrics[name] = {
+                "total_pnl": round(m.total_pnl, 2),
+                "win_rate": round(m.win_rate, 3),
+                "n_trades": m.n_trades,
+            }
+            self._metrics_dirty.discard(name)
+        perf = [
+            {"name": s.name, "mode": s.mode,
+             **self._strategy_metrics.get(
+                 s.name, {"total_pnl": 0.0, "win_rate": 0.0, "n_trades": 0})}
+            for s in self.strategies.all()
+        ]
+
+        # Machine-readable twin of this snapshot for Prometheus/Grafana.
+        from . import metrics as prom
+        prom.set_equity("real", self.risk.books["real"].equity)
+        prom.set_equity("shadow", self.risk.books["shadow"].equity)
+        prom.set_open_positions(len(positions))
+        for _book in ("real", "shadow"):
+            prom.set_halted(_book, self.risk.trading_halted(_book))
+
+        status = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "mode": ("dry-run" if (self._paper_mode or self._account_is_paper())
+                     else "live"),
+            "paused": self._paused,
+            "balance": round(balance, 2),
+            "equity": round(equity, 2),
+            "running_pl": running_pl,
+            "shadow_running_pl": shadow_running,
+            "closed_pl": closed_pl,
+            "day_start_equity": round(self.risk.day_start_equity, 2),
+            "drawdown_pct": round(dd * 100, 2),
+            "halted": (self.risk.trading_halted("real")
+                       or self.risk.trading_halted("shadow")),
+            "killed": self._killed,
+            "trade_counts": counts,
+            "signal": self._latest_signal,
+            "strategy_performance": perf,
+            "universe": self.universe,
+            "open_positions": [
+                {
+                    "symbol": p.symbol,
+                    "side": p.side.value,
+                    "volume": p.volume,
+                    "entry_price": p.entry_price,
+                    "mode": p.mode,
+                    # Running P/L marked to the latest price (paper positions don't
+                    # carry a live pnl), confidence + open time for the Trades tab.
+                    "pnl": p.pnl if p.pnl is not None else self._unrealized(p),
+                    "confidence": (p.context or {}).get("confidence"),
+                    "opened_at": p.opened_at.isoformat() if p.opened_at else None,
+                }
+                for p in positions
+            ],
+            "views": self._last_view,
+            "strategies": [
+                {"name": s.name, "mode": s.mode, "enabled": s.enabled,
+                 "timeframe": s.timeframe, "symbols": s.symbols,
+                 "excluded_symbols": s.excluded_symbols, "params": s.params}
+                for s in self.strategies.all()
+            ],
+            "macro": [
+                {"name": m.name, "value": m.value, "previous": m.previous}
+                for m in self._macro
+            ],
+            "news": [
+                {"title": n.title, "source": n.source,
+                 "summary": n.summary, "url": n.url, "symbols": n.symbols,
+                 "published": n.published.isoformat()}
+                for n in self._news[:25]
+            ],
+            "rl": self.rl.snapshot() if self.rl is not None else {"enabled": False},
+            "advisory": self._advisory.snapshot() if self._advisory is not None else None,
+            "offline_gate": self._offline_gate,
+            "offline_policy_loaded": self._offline is not None,
+            "filters": {"config": vars(self._filters), "rejects": dict(self._filter_rejects)},
+            "allocator": self.allocator.snapshot(),
+            "scoreboard": self._scoreboard,
+            "loop_seconds": dict(self.loop_durations),
+            "cap_saturation": dict(self.risk.cap_stats),
+        }
+
+        try:
+            path = Path(self.status_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Atomic write so the dashboard never reads a half-written file.
+            with tempfile.NamedTemporaryFile(
+                "w", dir=path.parent, delete=False, suffix=".tmp"
+            ) as tmp:
+                json.dump(status, tmp, default=str)
+                tmp_path = tmp.name
+            Path(tmp_path).replace(path)
+        except OSError as exc:
+            log.warning("Could not write status file: %s", exc)
+
+    def _heartbeat(self) -> None:
+        """Touch a file the Docker healthcheck watches."""
+        try:
+            from pathlib import Path
+
+            Path("data/heartbeat").write_text("ok")
+        except OSError:
+            pass
+
+
+def _summarize(features) -> dict:
+    """Compact, LLM/journal-friendly snapshot of a FeatureSet."""
+    ob = features.orderbook
+    return {
+        "price": round(features.last_price, 6),
+        "ema_fast": round(features.ema_fast, 6),
+        "ema_slow": round(features.ema_slow, 6),
+        "rsi": round(features.rsi, 1),
+        "atr": round(features.atr, 6),
+        "ob_imbalance": round(ob.imbalance, 3) if ob else None,
+        "ob_spread": round(ob.spread, 6) if ob else None,
+        "sentiment": round(features.sentiment.score, 2) if features.sentiment else None,
+    }
