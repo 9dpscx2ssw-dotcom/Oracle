@@ -1,0 +1,369 @@
+# Gungnir runtime config. Copy to config/config.yaml and edit.
+# Secrets come from .env, NOT here.
+
+agent:
+  fast_loop_seconds: 30      # sense → decide → act cadence
+  slow_loop_seconds: 3600    # learning / reflection / optimization cadence
+  dry_run: true              # paper trading; override with GUNGNIR_DRY_RUN
+
+# Markets to trade. `symbol` is the Capital.com *epic* (used directly by the live
+# feed) and also seeds the synthetic feed in paper mode, so these populate the
+# dashboard in either mode. Fifteen liquid defaults ship enabled; the rest are
+# listed but off. Every active strategy runs on every enabled symbol across its
+# timeframe, so N symbols ≈ N× the per-loop API calls — enable more rows only
+# after checking loop_seconds in status.json stays inside fast_loop_seconds.
+universe:
+  # ── Indices ──
+  - {symbol: US100,  enabled: true }    # US Tech 100
+  - {symbol: US500,  enabled: true }    # US 500
+  - {symbol: US30,   enabled: true }    # US Wall Street 30
+  - {symbol: RTY,    enabled: false}    # US Russell 2000
+  - {symbol: J225,   enabled: false}    # Japan 225
+  - {symbol: DE40,   enabled: true }    # Germany 40
+  - {symbol: UK100,  enabled: false}    # UK 100
+  - {symbol: HK50,   enabled: false}    # Hong Kong 50
+  # ── Commodities ──
+  - {symbol: GOLD,   enabled: true }    # Gold
+  # ── Crypto ──
+  - {symbol: BTCUSD, enabled: true }    # Bitcoin / USD
+  - {symbol: ETHUSD, enabled: true }    # Ethereum / USD
+  - {symbol: XRPUSD, enabled: false}    # Ripple / USD
+  - {symbol: SOLUSD, enabled: false}    # Solana / USD
+  - {symbol: DOGEUSD, enabled: false}   # Dogecoin / USD
+  # ── FX majors ──
+  - {symbol: EURUSD, enabled: true }
+  - {symbol: USDJPY, enabled: true }
+  - {symbol: GBPUSD, enabled: true }
+  - {symbol: AUDUSD, enabled: true }
+  - {symbol: NZDUSD, enabled: false}
+  - {symbol: USDCHF, enabled: false}
+  - {symbol: USDCAD, enabled: false}
+  # ── FX crosses / EM ──
+  - {symbol: EURJPY, enabled: false}
+  - {symbol: EURGBP, enabled: false}
+  - {symbol: EURAUD, enabled: false}
+  - {symbol: EURCHF, enabled: false}
+  - {symbol: EURCAD, enabled: false}
+  - {symbol: EURNZD, enabled: false}
+  - {symbol: USDMXN, enabled: false}
+  - {symbol: USDTRY, enabled: false}
+  - {symbol: USDPLN, enabled: false}
+  - {symbol: USDNOK, enabled: false}
+  - {symbol: USDZAR, enabled: false}
+  # ── US Stocks (Technology & Growth) ──
+  - {symbol: AAPL,  enabled: true }    # Apple Inc
+  - {symbol: MSFT,  enabled: false}    # Microsoft Corp
+  - {symbol: NVDA,  enabled: true }    # NVIDIA Corp
+  - {symbol: TSLA,  enabled: true }    # Tesla Inc
+  - {symbol: GOOGL, enabled: false}    # Alphabet Inc - A
+  - {symbol: AMZN,  enabled: false}    # Amazon.com Inc
+  - {symbol: META,  enabled: false}    # Meta Platforms Inc
+  - {symbol: INTC,  enabled: false}    # Intel Corp
+  - {symbol: AMD,   enabled: false}    # Advanced Micro Devices Inc
+  - {symbol: NFLX,  enabled: false}    # Netflix Inc
+  - {symbol: ADBE,  enabled: false}    # Adobe Systems Inc
+  - {symbol: QCOM,  enabled: false}    # QUALCOMM Inc
+  - {symbol: AVGO,  enabled: false}    # Broadcom Inc
+  - {symbol: MU,    enabled: false}    # Micron Technology Inc
+  - {symbol: SNDK,  enabled: false}    # SanDisk Corp
+  - {symbol: MRVL,  enabled: false}    # Marvell Technology Group
+  - {symbol: SMCI,  enabled: false}    # Super Micro Computer Inc
+  - {symbol: ORCL,  enabled: false}    # Oracle Corp
+  - {symbol: COIN,  enabled: false}    # Coinbase Global Inc
+  - {symbol: PLTR,  enabled: false}    # Palantir Technologies Inc
+  - {symbol: UBER,  enabled: false}    # Uber Technologies Inc
+  - {symbol: ARM,   enabled: false}    # ARM Holdings PLC
+  - {symbol: BABA,  enabled: false}    # Alibaba Group Holding Ltd
+  - {symbol: TSM,   enabled: false}    # Taiwan Semiconductor
+  - {symbol: LLY,   enabled: false}    # Eli Lilly & Co
+  - {symbol: SOFI,  enabled: false}    # SoFi Technologies Inc
+  - {symbol: IONQ,  enabled: false}    # IonQ Inc
+  - {symbol: QBTS,  enabled: false}    # D-Wave Quantum Inc
+  - {symbol: RGTI,  enabled: false}    # Rigetti Computing Inc
+  - {symbol: CORZ,  enabled: false}    # CoreWeave Inc
+  - {symbol: DELL,  enabled: false}    # Dell Technologies Inc
+  - {symbol: NOW,   enabled: false}    # ServiceNow
+  - {symbol: SPCE,  enabled: false}    # Virgin Galactic Holdings Inc
+  - {symbol: GME,   enabled: false}    # GameStop Corp
+  - {symbol: MARA,  enabled: false}    # Marathon Digital Holdings Inc
+  - {symbol: HIMS,  enabled: false}    # Hims & Hers Health Inc
+  - {symbol: AMC,   enabled: false}    # AMC Entertainment Holdings
+  # ── ETFs ──
+  - {symbol: SPY,   enabled: true }    # SPDR S&P 500 ETF
+  - {symbol: QQQ,   enabled: false}    # Invesco QQQ Trust (Nasdaq-100)
+  - {symbol: IVV,   enabled: false}    # iShares Core S&P 500 ETF
+
+data:
+  market:
+    candle_timeframe: M5     # M1, M5, M15, H1, ...
+    orderbook_depth: 10      # levels of depth to request
+    # Rate-limit guards (Capital.com throttles bursts hard, demo especially).
+    # Candles are cached per symbol/timeframe and refreshed only when the next
+    # bar can exist — never more often than candle_refetch_seconds; a failed
+    # refresh serves the last-known series instead of starving the strategies.
+    min_request_interval: 0.12   # seconds between REST requests
+    candle_refetch_seconds: 25   # floor between refetches of one series
+    max_concurrent_symbols: 8    # symbols processed in parallel per fast loop
+    # Live quote streaming over WebSocket: millisecond bid/offer for marks and
+    # agent-managed exits, with automatic reconnect. Every REST path stays as
+    # the fallback; false = snapshots only (previous behavior).
+    websocket: true
+    snapshot_ttl: 20.0           # one /markets snapshot serves tick + orderbook;
+                                 # must exceed per-loop symbol revisit time or
+                                 # every fast loop refetches every symbol
+  news:
+    rss_feeds:
+      - https://www.investing.com/rss/news.rss
+      - https://feeds.a.dj.com/rss/RSSMarketsMain.xml
+    poll_seconds: 600
+  macro:
+    # FRED series IDs to track.
+    fred_series:
+      CPI: CPIAUCSL          # CPI all urban consumers
+      FEDFUNDS: FEDFUNDS     # effective fed funds rate
+      UNRATE: UNRATE         # unemployment rate
+    poll_seconds: 86400
+
+# ── LLM Configuration ──────────────────────────────────────────────────────────
+# IMPORTANT: You can run this COMPLETELY FREE with local Ollama instead of API costs.
+# Cost comparison:
+#   - Anthropic Haiku 4.5 (DEFAULT): ~$2–3/day — the sentiment/prediction tasks are
+#     3-field JSON over headlines; a frontier model adds cost, not edge
+#   - Anthropic Opus/Fable: ~$30/day (set ANTHROPIC_MODEL only if you must)
+#   - Local Ollama:         $0/day (FREE, fully private, works offline)
+#   - Disable (provider: none):  $0/day (no LLM features)
+#
+# RECOMMENDED: Use local Ollama (free). To switch:
+#   1. Install Ollama from https://ollama.ai
+#   2. Run: ollama pull mistral (or llama2, neural-chat, etc.)
+#   3. Keep "ollama serve" running in a separate terminal
+#   4. Set provider to "ollama" below
+#
+llm:
+  provider: anthropic        # "anthropic" (API key) | "ollama" (free, local) |
+                             # "codex" (OpenAI Codex CLI on a ChatGPT plan) | "none"
+  # ── Codex CLI (subscription OAuth — no API key) ──
+  # The CLI is baked into the Docker image (INSTALL_CODEX build arg) and its
+  # token lives on the data volume (CODEX_HOME=/app/data/codex). One-time login,
+  # no browser needed in the container (device flow — visit the printed URL on
+  # any device and enter the code):
+  #   sudo docker compose exec brynnhildr sh -lc 'mkdir -p "$CODEX_HOME" && codex login --device-auth'
+  # Bare-metal instead: install the CLI, `codex login`, done. Each call shells
+  # out to `codex exec` — slow (seconds) but fine here: the LLM is advisory,
+  # cached, and never on the trading loop's critical path.
+  codex_cmd: codex                      # binary name/path
+  codex_model: ""                       # empty = the CLI's default model
+  codex_timeout_seconds: 120
+  # ── Anthropic (Claude API) ──
+  # Requires ANTHROPIC_API_KEY and ANTHROPIC_MODEL in .env
+  max_calls_per_minute: 12   # Anthropic tier: ~500 requests/min @ 10k TPM
+  # ── Ollama (Local, Free) ──
+  # No API keys needed; runs locally via "ollama serve"
+  ollama_url: http://localhost:11434    # Ollama server address
+  # Pick by available RAM (the tasks are simple JSON, so small models work well):
+  #   8GB box / TrueNAS (ZFS eats RAM):  llama3.2:3b (default) · gemma2:2b · llama3.2:1b
+  #   16GB+ with headroom:               mistral · llama3.1:8b · qwen2.5:7b
+  ollama_model: llama3.2:3b              # ~2.2GB; fits an 8GB homelab box
+  # Cache and LLM features. Sentiment is scored ONCE per news cycle at market
+  # level (RSS carries no per-symbol tags, so per-symbol calls just repeated
+  # the same headlines); predictions are per-symbol with their own TTL.
+  cache_ttl_seconds: 900         # LLM client-level prompt cache
+  refresh_seconds: 900           # market-sentiment refresh floor
+  prediction_ttl_seconds: 3600   # per-symbol prediction refresh floor
+  enable_sentiment: true     # Analyze market news for bullish/bearish tone
+  enable_prediction: true    # LLM price direction prediction (short-term)
+  enable_reflection: true    # Learn from trades via LLM reflection (slow loop)
+
+risk:
+  sizer: vol_target          # vol_target | kelly | fixed_fractional
+  account_risk_per_trade: 0.005   # 0.5% of equity at risk per trade
+  vol_target_annual: 0.10         # 10% annualized portfolio vol target
+  max_portfolio_exposure: 2.0     # gross leverage cap
+  max_per_asset_exposure: 0.5
+  max_open_positions: 5
+  max_opens_per_symbol_per_bar: 1  # when several strategies fire on the SAME symbol
+                                   # on the same bar, only the N highest-conviction
+                                   # may open (the rest net onto the same position and
+                                   # just churn the books). 0 disables the cap.
+  max_daily_drawdown: 0.03        # halt new entries if today's loss exceeds this
+  max_intraday_drawdown: 0.05     # halt this far below TODAY'S PEAK (catches a
+                                  # crash after a run-up; 0 disables)
+  max_total_drawdown: 0.25        # halt new entries this far below the equity peak
+  # All drawdown breakers are tracked PER BOOK (real account AND shadow/paper
+  # book) — orders are gated by the book they fill on, so a bleeding shadow
+  # book halts shadow entries even when the real account is untouched.
+  # halt_flatten: also CLOSE the halted book's open positions when a breaker
+  # engages (breakers otherwise only block new entries — open positions ride).
+  halt_flatten: false
+  # Loss-streak cooldown: after this many consecutive losing round-trips by one
+  # strategy on one symbol, bench that pairing for the cooldown (a winning
+  # close clears it early; 0 disables). Stops counter-trend re-entry loops.
+  loss_streak_trades: 3
+  loss_streak_cooldown_minutes: 60
+  min_confidence: 0.3             # minimum signal conviction (0-1) to trade
+  # Leverage settings (for margin accounts). Leverage caps margin capacity
+  # (max notional per order); it never scales position size.
+  leverage: 1.0                   # fallback for asset types not listed below
+  leverage_safety_margin: 0.10    # buffer above margin requirement (10% = 2x safer than needed)
+  # Broker-granted leverage per asset class (Capital.com retail defaults).
+  # Never set higher than the broker grants — orders get rejected on margin.
+  leverage_by_type:
+    forex: 200.0
+    indices: 200.0
+    commodities: 200.0
+    crypto: 20.0
+    stocks: 20.0
+  # Minimum lot size by market type (prevents positions too small to fill)
+  min_lot_by_type:
+    indices: 0.01                 # US100, US500, etc. — small increments
+    commodities: 0.01             # GOLD — small increments
+    forex: 100.0                  # EURUSD, GBPUSD, etc. — 100 unit minimum typical
+    crypto: 0.001                 # BTCUSD, ETHUSD, etc. — very small
+    stocks: 1.0                   # AAPL, TSLA, etc. — 1 share minimum typical
+  # Maximum lot size by market type (risk caps)
+  max_lot_by_type:
+    indices: null                 # unlimited (controlled by leverage + equity risk)
+    commodities: null
+    forex: null
+    crypto: null
+    stocks: null                  # unlimited (controlled by leverage + equity risk)
+
+learning:
+  optimizer: walk_forward         # walk_forward | bayesian | none
+  min_trades_before_tuning: 30
+  reflection_lookback_trades: 50
+  reflection_mode: bayesian       # llm (Phase 1 batch) | bayesian (Phase 2, deterministic)
+  # Per-symbol learned pruning (slow loop): blacklist a symbol for a strategy
+  # once it shows a well-sampled negative edge there. Undo by removing entries
+  # from excluded_symbols in data/strategies.yaml.
+  symbol_prune_min_trades: 30
+  symbol_prune_profit_factor: 0.5
+  demote_min_trades: 50           # evidence before demoting a whole strategy
+  demote_profit_factor: 0.5       # demote when overall PF is below this
+  # false = gated parameter changes are recorded as PENDING instead of
+  # self-applying (model-risk governance; apply via data/strategies.yaml).
+  auto_apply: true
+  # Continuous capital allocator: strategy sizing multiplier from recent,
+  # regime-conditional edge (floor..cap, neutral 1.0 while evidence is thin).
+  allocator:
+    floor: 0.1
+    cap: 1.5
+    decay: 0.99
+    min_trades: 15
+
+# Netted execution: strategies fill on per-strategy virtual books (journal/
+# allocator/RL attribution unchanged), while the account holds ONE net position
+# per symbol — a same-loop burst of duplicate signals becomes one order, and
+# opposing signals cancel instead of paying the spread twice. Net positions
+# carry no broker-side brackets (exits are agent-managed on the virtual books);
+# set netting: false to restore one-deal-per-strategy execution.
+execution:
+  netting: true
+  # Dead-man brake: every net position carries a WIDE broker-side stop so a
+  # crashed/offline agent can't ride a position unbounded. Distance = the widest
+  # virtual stop on the net side × mult (pct of price when no virtual stop).
+  # Wide by design — the agent's own exits fire first in normal operation.
+  catastrophe_stop_mult: 1.5
+  catastrophe_stop_pct: 0.05
+
+# Consensus aggregation (opt-in): collapse all strategy stances into ONE
+# decision per symbol. Strategies keep shadow-trading individually (journal/
+# allocator/RL attribution unchanged), but the ACCOUNT trades only the
+# consensus book: a conviction × allocator × RL-P(take) weighted vote,
+# family-capped so correlated strategy clones can't manufacture agreement,
+# vetoed when the opposing side holds >= veto_opposing of the vote, and
+# smoothed with enter/exit hysteresis so the book stops flip-flopping.
+aggregation:
+  mode: "off"                # off | consensus
+  veto_opposing: 0.35        # opposing vote share that blocks a NEW entry
+  family_cap: 0.4            # max share of the vote one strategy family may hold
+  ema_alpha: 0.6             # consensus smoothing (1.0 = no smoothing)
+  enter_threshold: 0.25      # |consensus| needed to open
+  exit_threshold: 0.10       # |consensus| floor to stay in (must be < enter)
+  min_hold_bars: 2           # consensus exits blocked this many bars after entry
+
+# Pre-trade compliance: hard rules applied to LIVE orders only.
+compliance:
+  max_order_notional: null   # absolute $ cap per live order (fat-finger guard)
+  max_orders_per_day: 200    # live-order budget per UTC day
+  restricted_symbols: []     # never trade these live
+
+# Reinforcement-learning decision layer. Strategies emit hard signals; this
+# actor-critic policy decides which to take and learns from every outcome
+# (taken trades by their PnL, skipped trades by the PnL they avoided).
+rl:
+  enabled: true
+  gate_signals: true        # false = learn but never block (pure observation)
+  shadow_skipped: true      # paper-fill skipped signals to learn the counterfactual
+  warmup_trades: 40         # take everything until this many updates have happened
+  take_threshold: 0.5       # P(take) at/above which the policy executes a signal
+  # Confidence-scaled sizing (post-warmup): P(take) at the threshold trades at
+  # the floor fraction of the vetted size, full conviction trades full size.
+  # Down-only — risk caps and broker minimums always hold.
+  confidence_sizing: true
+  confidence_sizing_floor: 0.5
+  hidden: 32                # hidden units in the actor-critic
+  learning_rate: 0.003
+  gamma: 0.95
+  entropy_coef: 0.01        # exploration pressure on the policy
+  buffer_size: 5000
+  batch_size: 32
+  epsilon_start: 0.30       # epsilon-greedy exploration, decays each update
+  epsilon_min: 0.05
+  epsilon_decay: 0.999
+  policy_path: data/rl_policy.npz
+
+# Mutable strategy state (modes + learned params). Lives in the writable data
+# volume, seeded on first run from config/strategies.yaml or the example.
+strategies_path: data/strategies.yaml
+
+persistence:
+  db_path: data/gungnir.db
+
+dashboard:
+  status_path: data/status.json   # live snapshot the agent publishes each loop
+  control_path: data/control.json # dashboard → agent control (strategy modes, pause)
+
+
+# Pre-trade context filters (veto-only). All off by default; toggle from the
+# dashboard Settings tab. Each can only block a signal, never enlarge a trade.
+filters:
+  trend: false        # signal side must agree with the EMA trend
+  volatility: false   # skip dead chop / extreme (news-spike) volatility
+  volume: false       # skip thin-volume bars (needs real volume data)
+  session: false      # skip outside the instrument's liquid UTC hours
+  spread: false       # skip when the quoted spread (bps) is too wide
+  regime: false       # no mean-reversion in trends, no trend-following in ranges
+  vol_min: 0.0001     # atr/price floor
+  vol_max: 0.03       # atr/price ceiling
+  min_volume_ratio: 0.5
+  max_spread_bps: 15.0
+  adx_trend: 25.0
+
+# Offline RL (advisory; see learning/rl). offline_advisory loads + shadow-tracks
+# a trained policy; offline_gate (veto-only) lets it block signals it disagrees
+# with. Both off by default.
+# rl:
+#   offline_advisory: false
+#   offline_policy_path: data/offline_dqn.npz
+#   offline_gate: false
+#   refresh_seconds: 300   # (under llm:) LLM sentiment/prediction refresh cadence
+
+# ── Prometheus metrics ─────────────────────────────────────────────────────────
+# Machine-readable twin of status.json: loop times, equity per book, signals by
+# disposition, closed trades/PnL, API 429s, quote-stream health, cap saturation,
+# live fill slippage. Scrape http://<agent>:9109/metrics with Prometheus/Grafana.
+# No-op when prometheus-client isn't installed.
+metrics:
+  enabled: true
+  port: 9109
+
+# ── Operator reporting ─────────────────────────────────────────────────────────
+reporting:
+  daily_summary: true       # daily digest via alert channels (Telegram/webhook):
+                            # today's P&L, win rate, per-strategy + per-instrument
+                            # breakdown, best/worst trade, avg confidence, and a
+                            # plain-language summary — the same figures the
+                            # dashboard's Reports tab shows. Once per UTC day.
+  weekly_summary: true      # weekly digest via alert channels: 7d P&L, best/worst
+                            # strategies, scoreboard verdict, RL health, vetoes

@@ -1,0 +1,253 @@
+strategies:
+- name: trend_following
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1h
+  params:
+    fast_ema: 20
+    slow_ema: 50
+    atr_period: 14
+    min_conviction: 0.3
+- name: mean_reversion
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    bb_period: 20
+    bb_std: 2.0
+- name: multi_bb
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_bb: 20
+- name: fvg_m30
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 30m
+  params:
+    lookback: 50
+    min_body_ratio: 0.5
+- name: bb_rsi
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_bb: 20
+    period_rsi: 11
+- name: macd_stoch
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_macd_fast: 13
+    period_macd_slow: 26
+- name: hma_dc_h1
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1h
+  params:
+    period_hma: 55
+    period_donchian: 20
+- name: cci_reversal
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1h
+  params:
+    period_cci: 14
+    threshold: 100
+- name: cci_macd
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_cci: 14
+- name: parsar_cci_ema
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_cci: 45
+    period_ema: 50
+- name: bb_macd_sma
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_bb: 20
+    std_dev: 2.0
+- name: cci200_ema_pivot
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_cci: 200
+- name: ema_stoch_rsi
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1h
+  params:
+    period_ema_fast: 5
+    period_ema_slow: 10
+- name: adx_momentum_ema
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_adx: 14
+    period_mom: 14
+    period_ema: 55
+- name: bb_rsi_cutting
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_bb: 20
+    period_rsi: 7
+- name: ao_macd
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 4h
+  params: {}
+- name: intelligent_trading
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1h
+  params:
+    period_smma_fast: 8
+    period_smma_slow: 18
+- name: alligator
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1h
+  params:
+    period_jaw: 13
+    period_teeth: 8
+    period_lips: 5
+- name: hma_dc_m1
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1m
+  params:
+    period_hma: 55
+    period_donchian: 20
+- name: hma_dc_m5
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 5m
+  params:
+    period_hma: 55
+    period_donchian: 20
+- name: hma_dc_m15
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    period_hma: 55
+    period_donchian: 20
+- name: hma_dc_h4
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 4h
+  params:
+    period_hma: 55
+    period_donchian: 20
+- name: hma_dc_d1
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1d
+  params:
+    period_hma: 55
+    period_donchian: 20
+- name: fvg_m1
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1m
+  params:
+    lookback: 50
+    min_body_ratio: 0.5
+- name: fvg_m5
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 5m
+  params:
+    lookback: 50
+    min_body_ratio: 0.5
+- name: fvg_m15
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 15m
+  params:
+    lookback: 50
+    min_body_ratio: 0.5
+- name: scalp_ema_vwap_m1
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 1m
+  params:
+    period_ema: 9
+- name: scalp_ema_vwap_m5
+  mode: shadow
+  enabled: true
+  symbols: []
+  excluded_symbols: []
+  timeframe: 5m
+  params:
+    period_ema: 9

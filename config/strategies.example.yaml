@@ -1,0 +1,249 @@
+# Active strategies, their mode, timeframe, and tunable params.
+#   mode: off | shadow | live   (toggle live from the dashboard's Strategies tab)
+#     off    — dormant
+#     shadow — paper-trades signals to evaluate the strategy risk-free (default)
+#     live   — trades the real account (only when not in global dry-run)
+#   timeframe: 1m | 5m | 15m | 30m | 1h | 4h | 1d
+#     Each strategy runs on its assigned timeframe (candles are fetched at that frequency)
+#
+# learning/optimizer.py + llm/reflection.py may propose param updates, which
+# (after the evaluator gates them) get written back to config/strategies.yaml.
+#
+# ── Curated default pool ───────────────────────────────────────────────────────
+# 8 strategies with distinct hypotheses run in shadow by default; everything else
+# starts OFF. Rationale (from live shadow evidence + cost realities):
+#   • M1/M5 signals rarely clear retail CFD spreads — the always-on defaults now
+#     sit on M15+ where the expected move per trade actually exceeds the cost;
+#   • near-duplicates (six hma_dc_* variants, four fvg_* variants, two scalps)
+#     mostly produce correlated noise that drowns the learning layers. One
+#     representative per idea stays on; the rest remain available and can be
+#     re-enabled from the dashboard at any time.
+# Signals are edge-triggered and evaluated once per closed bar, so a condition
+# that holds for 10 bars produces one trade, not ten.
+
+strategies:
+  # ── Curated pool (shadow) ── one representative per hypothesis ──
+  - name: trend_following        # EMA-cross trend following (H1)
+    mode: shadow
+    timeframe: 1h
+    symbols: []
+    params:
+      fast_ema: 20
+      slow_ema: 50
+      atr_period: 14
+      min_conviction: 0.3
+
+  - name: mean_reversion         # RSI + Bollinger reversion (M15)
+    mode: shadow
+    timeframe: 15m
+    symbols: []
+    params:
+      rsi_period: 14
+      rsi_oversold: 30
+      rsi_overbought: 70
+      bb_period: 20
+      bb_std: 2.0
+
+  - name: multi_bb               # Bollinger squeeze/expansion — best live win rate (56%)
+    mode: shadow
+    timeframe: 15m               # was 1m; moved above the cost floor
+    symbols: []
+    params:
+      period_bb: 20
+
+  - name: fvg_m30                # fair-value-gap fill — best live win rate at M30 (59%)
+    mode: shadow
+    timeframe: 30m
+    symbols: []
+    params:
+      lookback: 50
+      min_body_ratio: 0.5
+
+  - name: bb_rsi                 # Bollinger + RSI confirmation (M15, 57% live)
+    mode: shadow
+    timeframe: 15m
+    symbols: []
+    params:
+      period_bb: 20
+      period_rsi: 11
+
+  - name: macd_stoch             # MACD + stochastic momentum
+    mode: shadow
+    timeframe: 15m               # was 1m; moved above the cost floor
+    symbols: []
+    params:
+      period_macd_fast: 13
+      period_macd_slow: 26
+
+  - name: hma_dc_h1              # Hull MA + Donchian trend (H1 representative)
+    mode: shadow
+    timeframe: 1h
+    symbols: []
+    params:
+      period_hma: 55
+      period_donchian: 20
+
+  - name: cci_reversal           # CCI extreme reversal (H1)
+    mode: shadow
+    timeframe: 1h
+    symbols: []
+    params:
+      period_cci: 14
+      threshold: 100
+
+  # ── Bench (off by default; enable from the dashboard to trial) ──
+  - name: cci_macd
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_cci: 14
+
+  - name: parsar_cci_ema
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_cci: 45
+      period_ema: 50
+
+  - name: bb_macd_sma
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_bb: 20
+      std_dev: 2.0
+
+  - name: cci200_ema_pivot
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_cci: 200
+
+  - name: ema_stoch_rsi
+    mode: "off"
+    timeframe: 1h
+    symbols: []
+    params:
+      period_ema_fast: 5
+      period_ema_slow: 10
+
+  - name: adx_momentum_ema
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_adx: 14
+      period_mom: 14
+      period_ema: 55
+
+  - name: bb_rsi_cutting
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_bb: 20
+      period_rsi: 7
+
+  - name: ao_macd
+    mode: "off"
+    timeframe: 4h
+    symbols: []
+    params: {}
+
+  - name: intelligent_trading
+    mode: "off"
+    timeframe: 1h
+    symbols: []
+    params:
+      period_smma_fast: 8
+      period_smma_slow: 18
+
+  - name: alligator
+    mode: "off"
+    timeframe: 1h
+    symbols: []
+    params:
+      period_jaw: 13
+      period_teeth: 8
+      period_lips: 5
+
+  - name: hma_dc_m1
+    mode: "off"
+    timeframe: 1m
+    symbols: []
+    params:
+      period_hma: 55
+      period_donchian: 20
+
+  - name: hma_dc_m5
+    mode: "off"
+    timeframe: 5m
+    symbols: []
+    params:
+      period_hma: 55
+      period_donchian: 20
+
+  - name: hma_dc_m15
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      period_hma: 55
+      period_donchian: 20
+
+  - name: hma_dc_h4
+    mode: "off"
+    timeframe: 4h
+    symbols: []
+    params:
+      period_hma: 55
+      period_donchian: 20
+
+  - name: hma_dc_d1
+    mode: "off"
+    timeframe: 1d
+    symbols: []
+    params:
+      period_hma: 55
+      period_donchian: 20
+
+  - name: fvg_m1
+    mode: "off"
+    timeframe: 1m
+    symbols: []
+    params:
+      lookback: 50
+      min_body_ratio: 0.5
+
+  - name: fvg_m5
+    mode: "off"
+    timeframe: 5m
+    symbols: []
+    params:
+      lookback: 50
+      min_body_ratio: 0.5
+
+  - name: fvg_m15
+    mode: "off"
+    timeframe: 15m
+    symbols: []
+    params:
+      lookback: 50
+      min_body_ratio: 0.5
+
+  - name: scalp_ema_vwap_m1
+    mode: "off"
+    timeframe: 1m
+    symbols: []
+    params:
+      period_ema: 9
+
+  - name: scalp_ema_vwap_m5
+    mode: "off"
+    timeframe: 5m
+    symbols: []
+    params:
+      period_ema: 9
