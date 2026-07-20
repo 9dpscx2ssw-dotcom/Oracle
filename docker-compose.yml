@@ -1,0 +1,111 @@
+# Gungnir on TrueNAS SCALE (or any Docker host).
+#
+# TrueNAS SCALE (Electric Eel 24.10+) runs Docker Compose natively:
+#   Apps → Discover Apps → ⋮ → "Install via YAML" — paste this file.
+# Or deploy through Dockge / Portainer. See docs/TRUENAS.md for the full guide.
+#
+# Set DATA_DIR / CONFIG_DIR / PUID / PGID / TZ in a .env next to this file
+# (copy .env.example). On TrueNAS, point DATA_DIR/CONFIG_DIR at a dataset path
+# like /mnt/tank/apps/gungnir/{data,config} and chown it to PUID:PGID.
+
+services:
+  # The trading agent. Service is named for the valkyrie; the network alias
+  # `gungnir` keeps every gungnir:9109 reference (dashboard, prometheus.yml)
+  # resolving to this container.
+  odin:
+    build:
+      context: .
+      args:
+        # Bakes the OpenAI Codex CLI into the image (llm.provider: codex —
+        # subscription OAuth, no API key). Set to "false" to skip.
+        INSTALL_CODEX: ${INSTALL_CODEX:-false}
+    image: odin:latest
+    container_name: odin
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [odin]
+    # No `user:` here on purpose: the container starts as root so the entrypoint
+    # can chown the mounted /app/data to PUID:PGID, then gosu drops to that user.
+    # The app process never runs as root. (Pin `user:` only if you've already
+    # chowned the host dataset and want to skip the startup chown.)
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-UTC}
+      PUID: ${PUID:-568}
+      PGID: ${PGID:-568}
+      # Codex CLI state (subscription OAuth token) lives on the persistent data
+      # volume. One-time login, straight through this compose stack:
+      #   sudo docker compose exec brynnhildr sh -lc 'mkdir -p "$CODEX_HOME" && codex login --device-auth'
+      # (visit the printed URL on any device, enter the code — no browser needed
+      # in the container; the codex wrapper chowns the token to PUID afterwards
+      # so the agent can read and auto-refresh it, no restart required)
+      CODEX_HOME: /app/data/codex
+    volumes:
+      # Named volume → persists across `up -d --build`, restart, recreate and
+      # `down` (only `down -v` removes it). Robust regardless of CWD/host path.
+      - odin-data:/app/data
+      # Prefer a host directory (e.g. a TrueNAS dataset)? Comment the line above
+      # and uncomment this — make sure DATA_DIR is an absolute, persistent path:
+      #- ${DATA_DIR:-./data}:/app/data
+      - ${CONFIG_DIR:-./config}:/app/config:ro   # config is read-only; state lives in /app/data
+    command: ["python", "-m", "gungnir.main", "--config", "config/config.yaml"]
+    ports:
+      # Prometheus scrape endpoint (metrics.enabled in config; see metrics:).
+      - "${METRICS_PORT:-9111}:9109"
+    deploy:
+      resources:
+        limits:
+          memory: 10g
+    healthcheck:
+      # Freshness, not existence: a crash-looping or frozen agent leaves the
+      # heartbeat file in place but stops touching it. 180s = 6x the default
+      # fast loop; staler than that means iterations are not completing.
+      test: ["CMD", "python", "-c", "import os,sys,time; p='/app/data/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<180 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Read-only monitoring + control console. Same image, different entrypoint.
+  # Open http://<truenas-ip>:8080
+  dashboard:
+    build:
+      context: .
+      args:
+        INSTALL_CODEX: ${INSTALL_CODEX:-false}
+    image: odin:latest
+    container_name: odin-dashboard
+    restart: unless-stopped
+    # Same root→gosu drop as the agent service (see note above).
+    depends_on:
+      - odin
+    command: ["python", "-m", "gungnir.dashboard", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      TZ: ${TZ:-UTC}
+      PUID: ${PUID:-568}
+      PGID: ${PGID:-568}
+      GUNGNIR_DB_PATH: /app/data/odin.db
+      GUNGNIR_STATUS_PATH: /app/data/status.json
+      GUNGNIR_CONTROL_PATH: /app/data/control.json
+      GUNGNIR_CONFIG: /app/config/config.yaml
+      # Mirror the agent's safety gates so dashboard decisions show the true
+      # effective state instead of falling back to the config-file default.
+      GUNGNIR_DRY_RUN: ${GUNGNIR_DRY_RUN:-true}
+      CAPITAL_COM_ALLOW_LIVE: ${CAPITAL_COM_ALLOW_LIVE:-false}
+      CAPITAL_COM_DEMO: ${CAPITAL_COM_DEMO:-true}
+      # Agent's Prometheus endpoint — feeds the Trades tab telemetry card.
+      GUNGNIR_METRICS_URL: http://odin:9109/metrics
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}   # control-plane auth (set in .env)
+    ports:
+      - "${DASHBOARD_PORT:-8082}:8080"
+    volumes:
+      # Shares the same persistent state as the agent (read-only console).
+      - odin-data:/app/data
+      #- ${DATA_DIR:-./data}:/app/data
+      - ${CONFIG_DIR:-./config}:/app/config:ro
+
+# Persistent state lives here; `docker compose down` keeps it, only `down -v` wipes it.
+volumes:
+  odin-data:

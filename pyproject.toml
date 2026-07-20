@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gungnir"
+version = "0.1.0"
+description = "Self-improving multi-strategy trading agent for Capital.com, powered by a free LLM, for a TrueNAS homelab."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    # LLM (Anthropic Claude)
+    "anthropic>=0.26.0",
+    # News aggregation
+    "feedparser>=6.0",
+    # Bayesian hyperparameter optimization (reflection_mode: bayesian)
+    "scipy>=1.13",
+    # Capital.com quote streaming (REST fallback if the socket is down)
+    "websockets>=12",
+    # Metrics endpoint (metrics.enabled; degrades to no-op if missing)
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "hypothesis>=6.100",
+]
+# Heavier numeric/ML optimization deps, optional so the base image stays small.
+learn = [
+    "scikit-learn>=1.4",
+]
+# Monitoring dashboard (FastAPI + uvicorn). Optional; runs as its own process.
+dashboard = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.scripts]
+gungnir = "gungnir.main:main"
+gungnir-dashboard = "gungnir.dashboard.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"gungnir.dashboard" = ["static/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

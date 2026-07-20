@@ -1,0 +1,597 @@
+odin-dashboard  | 2026-07-20T12:07:25.033146949Z INFO:     Started server process [1]
+odin-dashboard  | 2026-07-20T12:07:25.033206800Z INFO:     Waiting for application startup.
+odin-dashboard  | 2026-07-20T12:07:25.033375869Z INFO:     Application startup complete.
+odin-dashboard  | 2026-07-20T12:07:25.040960416Z INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+odin            | 2026-07-20T12:07:24.645281719Z 2026-07-20 12:07:24,645 WARNING gungnir: Capital.com endpoint: DEMO (https://demo-api-capital.backend-capital.com)
+odin            | 2026-07-20T12:07:24.748289052Z 2026-07-20 12:07:24,748 INFO gungnir.strategy.registry: Loaded 28 strategies
+odin            | 2026-07-20T12:07:24.749906892Z 2026-07-20 12:07:24,749 INFO gungnir: Gungnir starting in Capital.com-connected (DEMO) mode over 28 strategies
+odin            | 2026-07-20T12:07:24.751826506Z 2026-07-20 12:07:24,751 INFO gungnir.risk.portfolio: Restored breaker state from data/risk_state.json (day=2026-07-20, same_day=True)
+odin            | 2026-07-20T12:07:24.753381742Z 2026-07-20 12:07:24,753 WARNING gungnir.core.alerts: ALERT [startup]: operator alerts online (telegram)
+odin            | 2026-07-20T12:07:24.754217911Z 2026-07-20 12:07:24,753 INFO gungnir.core.compliance: Restored compliance counter: 34 live orders already today
+odin            | 2026-07-20T12:07:24.754596671Z 2026-07-20 12:07:24,754 INFO gungnir.core.agent: Consensus aggregation ON (veto 35%, family cap 40%)
+odin            | 2026-07-20T12:07:24.760521384Z 2026-07-20 12:07:24,760 INFO gungnir.core.agent: Loaded RL policy from data/rl_policy.npz
+odin            | 2026-07-20T12:07:25.587807568Z 2026-07-20 12:07:25,587 INFO gungnir.core.alerts: Alert delivered via Telegram
+odin            | 2026-07-20T12:07:25.709929257Z 2026-07-20 12:07:25,709 INFO gungnir.execution.capital_session: Capital.com session established (demo)
+odin            | 2026-07-20T12:07:25.711063888Z 2026-07-20 12:07:25,710 INFO gungnir.data.capital_com_feed: CapitalComMarketFeed ready for 18 symbols (stream=on)
+odin            | 2026-07-20T12:07:25.712730132Z 2026-07-20 12:07:25,712 INFO gungnir.core.metrics: Prometheus metrics on :9109/metrics
+odin            | 2026-07-20T12:07:26.527571245Z 2026-07-20 12:07:26,527 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:07:26.541108941Z 2026-07-20 12:07:26,540 INFO gungnir.data.capital_ws: Quote stream connected (18 symbols)
+odin            | 2026-07-20T12:07:27.320400443Z 2026-07-20 12:07:27,319 INFO gungnir.core.alerts: Alert delivered via Telegram
+odin            | 2026-07-20T12:07:29.158412216Z 2026-07-20 12:07:29,158 INFO gungnir.data.news_feed: Fetched 30 news items
+odin            | 2026-07-20T12:07:31.335802950Z 2026-07-20 12:07:31,335 INFO gungnir.data.news_feed: Fetched 1 Finnhub news items
+odin            | 2026-07-20T12:07:39.146942664Z 2026-07-20 12:07:39,146 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.147817611Z 2026-07-20 12:07:39,147 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.148436389Z 2026-07-20 12:07:39,148 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.149065688Z 2026-07-20 12:07:39,148 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.149672503Z 2026-07-20 12:07:39,149 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.150365380Z 2026-07-20 12:07:39,150 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.150968647Z 2026-07-20 12:07:39,150 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.151630961Z 2026-07-20 12:07:39,151 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.152355341Z 2026-07-20 12:07:39,152 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.152919084Z 2026-07-20 12:07:39,152 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.153466561Z 2026-07-20 12:07:39,153 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.154068352Z 2026-07-20 12:07:39,153 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.154684838Z 2026-07-20 12:07:39,154 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.155247533Z 2026-07-20 12:07:39,155 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.155843053Z 2026-07-20 12:07:39,155 INFO gungnir.execution.broker: [PAPER] opened sell US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.156399971Z 2026-07-20 12:07:39,156 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.156938917Z 2026-07-20 12:07:39,156 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.157491531Z 2026-07-20 12:07:39,157 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.1000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.157952745Z 2026-07-20 12:07:39,157 INFO gungnir.execution.broker: [PAPER] opened buy US100 vol=0.2000 @ 28833.40000
+odin            | 2026-07-20T12:07:39.274776570Z 2026-07-20 12:07:39,274 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.275307486Z 2026-07-20 12:07:39,275 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.275834024Z 2026-07-20 12:07:39,275 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.276507058Z 2026-07-20 12:07:39,276 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.277079584Z 2026-07-20 12:07:39,276 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.277566205Z 2026-07-20 12:07:39,277 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.278051837Z 2026-07-20 12:07:39,277 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.278548083Z 2026-07-20 12:07:39,278 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.279080341Z 2026-07-20 12:07:39,278 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.279527010Z 2026-07-20 12:07:39,279 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.280127992Z 2026-07-20 12:07:39,279 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.280609544Z 2026-07-20 12:07:39,280 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.281134922Z 2026-07-20 12:07:39,281 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.281691796Z 2026-07-20 12:07:39,281 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.282199607Z 2026-07-20 12:07:39,282 INFO gungnir.execution.broker: [PAPER] opened sell DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.282704494Z 2026-07-20 12:07:39,282 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.1000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.283050834Z 2026-07-20 12:07:39,282 INFO gungnir.execution.broker: [PAPER] opened buy DE40 vol=0.2000 @ 24874.35000
+odin            | 2026-07-20T12:07:39.508202333Z 2026-07-20 12:07:39,506 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.508225617Z 2026-07-20 12:07:39,507 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.508455502Z 2026-07-20 12:07:39,508 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.509222137Z 2026-07-20 12:07:39,509 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.509903298Z 2026-07-20 12:07:39,509 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.510560269Z 2026-07-20 12:07:39,510 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.511283310Z 2026-07-20 12:07:39,511 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.512046769Z 2026-07-20 12:07:39,511 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.512741613Z 2026-07-20 12:07:39,512 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.513401587Z 2026-07-20 12:07:39,513 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.514117581Z 2026-07-20 12:07:39,514 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.514891165Z 2026-07-20 12:07:39,514 INFO gungnir.execution.broker: [PAPER] opened sell US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.515712415Z 2026-07-20 12:07:39,515 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.516460932Z 2026-07-20 12:07:39,516 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.517172710Z 2026-07-20 12:07:39,517 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:39.517800475Z 2026-07-20 12:07:39,517 INFO gungnir.execution.broker: [PAPER] opened buy US500 vol=0.1000 @ 7487.70000
+odin            | 2026-07-20T12:07:40.476231846Z 2026-07-20 12:07:40,474 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.476259046Z 2026-07-20 12:07:40,475 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.476282440Z 2026-07-20 12:07:40,475 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.476913628Z 2026-07-20 12:07:40,476 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.478042195Z 2026-07-20 12:07:40,477 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.478782165Z 2026-07-20 12:07:40,478 INFO gungnir.execution.broker: [PAPER] opened buy EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.479442087Z 2026-07-20 12:07:40,479 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.480191239Z 2026-07-20 12:07:40,479 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.480713908Z 2026-07-20 12:07:40,480 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.481693701Z 2026-07-20 12:07:40,481 INFO gungnir.execution.broker: [PAPER] opened buy EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.482395525Z 2026-07-20 12:07:40,482 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.483116947Z 2026-07-20 12:07:40,482 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=1000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:40.483649674Z 2026-07-20 12:07:40,483 WARNING gungnir.core.agent: Compliance blocked consensus sell EURUSD: order notional 1,143 exceeds cap 1,000
+odin            | 2026-07-20T12:07:40.484878463Z 2026-07-20 12:07:40,484 INFO gungnir.execution.broker: [PAPER] opened sell EURUSD vol=8000.0000 @ 1.14281
+odin            | 2026-07-20T12:07:44.367337003Z 2026-07-20 12:07:44,366 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0100 @ 1881.51500
+odin            | 2026-07-20T12:07:44.369030334Z 2026-07-20 12:07:44,368 INFO gungnir.execution.broker: [PAPER] opened sell ETHUSD vol=0.0247 @ 1881.51500
+odin            | 2026-07-20T12:07:44.374217850Z 2026-07-20 12:07:44,371 INFO gungnir.execution.broker: [PAPER] opened sell ETHUSD vol=0.0219 @ 1881.51500
+odin            | 2026-07-20T12:07:44.374244681Z 2026-07-20 12:07:44,372 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0179 @ 1881.51500
+odin            | 2026-07-20T12:07:44.374254574Z 2026-07-20 12:07:44,372 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0229 @ 1881.51500
+odin            | 2026-07-20T12:07:44.374278242Z 2026-07-20 12:07:44,373 INFO gungnir.execution.broker: [PAPER] opened sell ETHUSD vol=0.0185 @ 1881.51500
+odin            | 2026-07-20T12:07:44.374287591Z 2026-07-20 12:07:44,373 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0359 @ 1881.51500
+odin            | 2026-07-20T12:07:44.381160774Z 2026-07-20 12:07:44,381 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0278 @ 1881.51500
+odin            | 2026-07-20T12:07:44.381862234Z 2026-07-20 12:07:44,381 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0287 @ 1881.51500
+odin            | 2026-07-20T12:07:44.382557888Z 2026-07-20 12:07:44,382 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0179 @ 1881.51500
+odin            | 2026-07-20T12:07:44.383270086Z 2026-07-20 12:07:44,383 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0169 @ 1881.51500
+odin            | 2026-07-20T12:07:44.383963904Z 2026-07-20 12:07:44,383 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0221 @ 1881.51500
+odin            | 2026-07-20T12:07:44.385033208Z 2026-07-20 12:07:44,384 INFO gungnir.execution.broker: [PAPER] opened sell ETHUSD vol=0.0190 @ 1881.51500
+odin            | 2026-07-20T12:07:44.385704901Z 2026-07-20 12:07:44,385 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0235 @ 1881.51500
+odin            | 2026-07-20T12:07:44.386429956Z 2026-07-20 12:07:44,386 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0287 @ 1881.51500
+odin            | 2026-07-20T12:07:44.387083898Z 2026-07-20 12:07:44,386 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0409 @ 1881.51500
+odin            | 2026-07-20T12:07:44.387806996Z 2026-07-20 12:07:44,387 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0274 @ 1881.51500
+odin            | 2026-07-20T12:07:44.388463113Z 2026-07-20 12:07:44,388 INFO gungnir.execution.broker: [PAPER] opened sell ETHUSD vol=0.0142 @ 1881.51500
+odin            | 2026-07-20T12:07:44.389434991Z 2026-07-20 12:07:44,389 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0142 @ 1881.51500
+odin            | 2026-07-20T12:07:44.390107253Z 2026-07-20 12:07:44,390 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0176 @ 1881.51500
+odin            | 2026-07-20T12:07:44.393143359Z 2026-07-20 12:07:44,393 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.2541 @ 1881.51500
+odin            | 2026-07-20T12:07:44.404011987Z 2026-07-20 12:07:44,403 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.405735849Z 2026-07-20 12:07:44,405 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.407093384Z 2026-07-20 12:07:44,406 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.408914521Z 2026-07-20 12:07:44,408 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.410033918Z 2026-07-20 12:07:44,409 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.410739527Z 2026-07-20 12:07:44,410 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.411371503Z 2026-07-20 12:07:44,411 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.412964863Z 2026-07-20 12:07:44,412 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.414070324Z 2026-07-20 12:07:44,413 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.415625191Z 2026-07-20 12:07:44,415 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.420080439Z 2026-07-20 12:07:44,419 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.420874958Z 2026-07-20 12:07:44,420 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.424833129Z 2026-07-20 12:07:44,423 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.426497215Z 2026-07-20 12:07:44,426 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.427446937Z 2026-07-20 12:07:44,427 INFO gungnir.execution.broker: [PAPER] opened buy AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.428319296Z 2026-07-20 12:07:44,428 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.428975050Z 2026-07-20 12:07:44,428 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:44.429587142Z 2026-07-20 12:07:44,429 INFO gungnir.execution.broker: [PAPER] opened sell AAPL vol=1.0000 @ 331.42000
+odin            | 2026-07-20T12:07:45.065953645Z 2026-07-20 12:07:45,065 INFO gungnir.execution.broker: [PAPER] opened sell BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.066745096Z 2026-07-20 12:07:45,066 INFO gungnir.execution.broker: [PAPER] opened sell BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.067502830Z 2026-07-20 12:07:45,067 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.068256794Z 2026-07-20 12:07:45,068 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.069024855Z 2026-07-20 12:07:45,068 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.069986390Z 2026-07-20 12:07:45,069 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.070949877Z 2026-07-20 12:07:45,070 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.071725917Z 2026-07-20 12:07:45,071 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.072471163Z 2026-07-20 12:07:45,072 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.073617517Z 2026-07-20 12:07:45,073 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.074475580Z 2026-07-20 12:07:45,074 INFO gungnir.execution.broker: [PAPER] opened sell BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.075230818Z 2026-07-20 12:07:45,075 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.076081862Z 2026-07-20 12:07:45,075 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.076958614Z 2026-07-20 12:07:45,076 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.078169155Z 2026-07-20 12:07:45,078 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.079959500Z 2026-07-20 12:07:45,079 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.080758398Z 2026-07-20 12:07:45,080 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0100 @ 64780.60000
+odin            | 2026-07-20T12:07:45.081985603Z 2026-07-20 12:07:45,081 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.1100 @ 64780.60000
+odin            | 2026-07-20T12:07:46.905966685Z 2026-07-20 12:07:46,905 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.907080118Z 2026-07-20 12:07:46,906 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.907801193Z 2026-07-20 12:07:46,907 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.908655329Z 2026-07-20 12:07:46,908 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.909483824Z 2026-07-20 12:07:46,909 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.910205941Z 2026-07-20 12:07:46,910 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.910764573Z 2026-07-20 12:07:46,910 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.911341357Z 2026-07-20 12:07:46,911 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.911898883Z 2026-07-20 12:07:46,911 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.912646312Z 2026-07-20 12:07:46,912 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.913096640Z 2026-07-20 12:07:46,912 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.915041422Z 2026-07-20 12:07:46,913 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.915065747Z 2026-07-20 12:07:46,914 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.915641958Z 2026-07-20 12:07:46,915 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.916095564Z 2026-07-20 12:07:46,915 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.987964244Z 2026-07-20 12:07:46,986 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:46.995398741Z 2026-07-20 12:07:46,995 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:47.001229231Z 2026-07-20 12:07:47,000 INFO gungnir.execution.broker: [PAPER] opened sell TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:47.002296605Z 2026-07-20 12:07:47,001 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:47.002352440Z 2026-07-20 12:07:47,002 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:47.003355165Z 2026-07-20 12:07:47,002 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:47.003379392Z 2026-07-20 12:07:47,003 INFO gungnir.execution.broker: [PAPER] opened buy TSLA vol=1.0000 @ 384.64000
+odin            | 2026-07-20T12:07:47.169893211Z 2026-07-20 12:07:47,169 INFO gungnir.execution.broker: [PAPER] opened sell NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.170640415Z 2026-07-20 12:07:47,170 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.171229888Z 2026-07-20 12:07:47,171 INFO gungnir.execution.broker: [PAPER] opened sell NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.171926376Z 2026-07-20 12:07:47,171 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.172711139Z 2026-07-20 12:07:47,172 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.176901373Z 2026-07-20 12:07:47,176 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.177679887Z 2026-07-20 12:07:47,177 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.178410965Z 2026-07-20 12:07:47,178 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.179144937Z 2026-07-20 12:07:47,179 INFO gungnir.execution.broker: [PAPER] opened sell NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.179883778Z 2026-07-20 12:07:47,179 INFO gungnir.execution.broker: [PAPER] opened sell NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.180655794Z 2026-07-20 12:07:47,180 INFO gungnir.execution.broker: [PAPER] opened sell NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.181477608Z 2026-07-20 12:07:47,181 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.182306835Z 2026-07-20 12:07:47,182 INFO gungnir.execution.broker: [PAPER] opened sell NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.183061679Z 2026-07-20 12:07:47,182 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.184705169Z 2026-07-20 12:07:47,184 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.185605570Z 2026-07-20 12:07:47,185 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.186373996Z 2026-07-20 12:07:47,186 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=1.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.187035508Z 2026-07-20 12:07:47,186 INFO gungnir.execution.broker: [PAPER] opened buy NVDA vol=5.0000 @ 205.52500
+odin            | 2026-07-20T12:07:47.188526467Z 2026-07-20 12:07:47,188 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.189470085Z 2026-07-20 12:07:47,189 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.191767823Z 2026-07-20 12:07:47,190 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.191855999Z 2026-07-20 12:07:47,190 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.191949395Z 2026-07-20 12:07:47,191 INFO gungnir.execution.broker: [PAPER] opened sell GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.192267625Z 2026-07-20 12:07:47,192 INFO gungnir.execution.broker: [PAPER] opened sell GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.194176953Z 2026-07-20 12:07:47,193 INFO gungnir.execution.broker: [PAPER] opened sell GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.195841703Z 2026-07-20 12:07:47,194 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.199849742Z 2026-07-20 12:07:47,196 INFO gungnir.execution.broker: [PAPER] opened sell GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.199892479Z 2026-07-20 12:07:47,197 INFO gungnir.execution.broker: [PAPER] opened sell GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.199903297Z 2026-07-20 12:07:47,198 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:47.199912074Z 2026-07-20 12:07:47,198 INFO gungnir.execution.broker: [PAPER] opened buy GBPUSD vol=1000.0000 @ 1.34624
+odin            | 2026-07-20T12:07:50.387036071Z 2026-07-20 12:07:50,386 INFO gungnir.core.agent: Backfilled 66 candles into the validation history store
+odin            | 2026-07-20T12:07:52.143187235Z 2026-07-20 12:07:52,143 INFO gungnir.data.macro_feed: Fetched 3 macro indicators
+odin            | 2026-07-20T12:07:52.146217184Z 2026-07-20 12:07:52,146 WARNING gungnir.core.agent: RL DIVERGENCE: Reward collapsed: 30.11 → 21.36 (29% drop)
+odin            | 2026-07-20T12:07:52.146273760Z 2026-07-20 12:07:52,146 WARNING gungnir.core.alerts: ALERT [rl_divergence]: RL divergence: Reward collapsed: 30.11 → 21.36 (29% drop)
+odin            | 2026-07-20T12:07:52.162525018Z 2026-07-20 12:07:52,162 INFO gungnir.learning.allocator: Allocator refreshed over 22 strategies: best ('hma_dc_m1', None)=1.50x, worst ('scalp_ema_vwap_m1', 'trend_high')=0.33x
+odin            | 2026-07-20T12:07:52.179910927Z 2026-07-20 12:07:52,179 INFO gungnir.learning.scoreboard: Scoreboard: book 30d sharpe 0.1572 (prev 0.0000), expectancy 0.3422 (prev 0.0000), 187 trades — INSUFFICIENT DATA
+odin            | 2026-07-20T12:07:52.653129413Z 2026-07-20 12:07:52,652 INFO gungnir.core.agent: Backup written to data/backups/2026-07-20
+odin            | 2026-07-20T12:07:52.666983130Z 2026-07-20 12:07:52,666 INFO gungnir.strategy.registry: Saved strategy state to data/strategies.yaml
+odin            | 2026-07-20T12:07:52.902121309Z 2026-07-20 12:07:52,901 INFO gungnir.core.alerts: Alert delivered via Telegram
+odin            | 2026-07-20T12:08:19.354856402Z 2026-07-20 12:08:19,354 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:08:21.413627417Z 2026-07-20 12:08:21,413 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1881.36500, pnl=-0.00
+odin            | 2026-07-20T12:08:21.418144532Z 2026-07-20 12:08:21,417 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1881.36500, pnl=-0.00
+odin            | 2026-07-20T12:08:21.422096389Z 2026-07-20 12:08:21,421 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1881.36500, pnl=-0.04
+odin            | 2026-07-20T12:08:21.428198921Z 2026-07-20 12:08:21,423 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.2130 @ 1881.36500
+odin            | 2026-07-20T12:08:39.354145348Z 2026-07-20 12:08:39,353 WARNING gungnir.llm.client: Ollama call failed (timed out); returning fallback.
+odin            | 2026-07-20T12:08:54.412707955Z 2026-07-20 12:08:54,412 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:09:29.205697807Z 2026-07-20 12:09:29,205 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:09:39.428583880Z 2026-07-20 12:09:39,428 WARNING gungnir.llm.client: Ollama call failed (timed out); returning fallback.
+odin            | 2026-07-20T12:10:03.825190697Z 2026-07-20 12:10:03,825 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:10:38.447057288Z 2026-07-20 12:10:38,446 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:10:39.500561601Z 2026-07-20 12:10:39,500 WARNING gungnir.llm.client: Ollama call failed (timed out); returning fallback.
+odin            | 2026-07-20T12:11:13.286549926Z 2026-07-20 12:11:13,286 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:11:47.908828926Z 2026-07-20 12:11:47,908 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:12:22.528333348Z 2026-07-20 12:12:22,527 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:12:24.948059706Z 2026-07-20 12:12:24,947 INFO gungnir.execution.broker: [PAPER] closed BTCUSD: entry=64780.60000, exit=64708.65000, pnl=-0.72
+odin            | 2026-07-20T12:12:24.950606657Z 2026-07-20 12:12:24,950 INFO gungnir.execution.broker: [PAPER] closed BTCUSD: entry=64780.60000, exit=64708.65000, pnl=-0.72
+odin            | 2026-07-20T12:12:24.953139040Z 2026-07-20 12:12:24,952 INFO gungnir.execution.broker: [PAPER] closed BTCUSD: entry=64780.60000, exit=64708.65000, pnl=-7.91
+odin            | 2026-07-20T12:12:24.954609201Z 2026-07-20 12:12:24,953 INFO gungnir.execution.broker: [PAPER] opened buy BTCUSD vol=0.0900 @ 64708.65000
+odin            | 2026-07-20T12:12:57.136097839Z 2026-07-20 12:12:57,135 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:12:59.093228842Z 2026-07-20 12:12:59,092 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.07
+odin            | 2026-07-20T12:12:59.098174496Z 2026-07-20 12:12:59,097 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.14
+odin            | 2026-07-20T12:12:59.102037725Z 2026-07-20 12:12:59,101 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.11
+odin            | 2026-07-20T12:12:59.105749469Z 2026-07-20 12:12:59,105 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.11
+odin            | 2026-07-20T12:12:59.109415572Z 2026-07-20 12:12:59,109 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.07
+odin            | 2026-07-20T12:12:59.111868213Z 2026-07-20 12:12:59,111 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.09
+odin            | 2026-07-20T12:12:59.114307532Z 2026-07-20 12:12:59,114 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.51500, exit=1877.65500, pnl=-0.11
+odin            | 2026-07-20T12:12:59.116227135Z 2026-07-20 12:12:59,116 INFO gungnir.execution.broker: [PAPER] closed ETHUSD: entry=1881.36500, exit=1877.65500, pnl=-0.79
+odin            | 2026-07-20T12:12:59.116410729Z 2026-07-20 12:12:59,116 INFO gungnir.execution.broker: [PAPER] opened buy ETHUSD vol=0.0340 @ 1877.65500
+odin            | 2026-07-20T12:13:31.857045471Z 2026-07-20 12:13:31,856 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:14:06.485974354Z 2026-07-20 12:14:06,485 INFO gungnir.execution.capital_com: Position EURUSD (deal 00000000-5783-d65c-0480-dbd70055311e) closed broker-side; queued for grading
+odin            | 2026-07-20T12:14:06.774599201Z 2026-07-20 12:14:06,774 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:14:41.365769992Z 2026-07-20 12:14:41,365 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:15:16.103226888Z 2026-07-20 12:15:16,102 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:15:50.706301654Z 2026-07-20 12:15:50,706 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:16:25.268885709Z 2026-07-20 12:16:25,268 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:16:59.829150090Z 2026-07-20 12:16:59,828 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:17:34.659605457Z 2026-07-20 12:17:34,659 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:17:36.772210722Z 2026-07-20 12:17:36,769 INFO gungnir.data.news_feed: Fetched 30 news items
+odin            | 2026-07-20T12:17:38.623514075Z 2026-07-20 12:17:38,623 INFO gungnir.data.news_feed: Fetched 1 Finnhub news items
+odin            | 2026-07-20T12:18:13.654080201Z 2026-07-20 12:18:13,653 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:18:48.775232474Z 2026-07-20 12:18:48,775 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:19:23.345675402Z 2026-07-20 12:19:23,345 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:19:58.111041679Z 2026-07-20 12:19:58,110 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:20:32.686775734Z 2026-07-20 12:20:32,686 INFO gungnir.execution.capital_com: Position GBPUSD (deal 00000000-5783-f083-0480-dbd70055311e) closed broker-side; queued for grading
+odin            | 2026-07-20T12:20:32.958685795Z 2026-07-20 12:20:32,958 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:21:07.525559749Z 2026-07-20 12:21:07,525 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin            | 2026-07-20T12:21:42.254058014Z 2026-07-20 12:21:42,253 WARNING gungnir.core.alerts: ALERT [reconciliation]: unattributed broker positions adopted: ['AAPL', 'BTCUSD', 'ETHUSD', 'EURUSD', 'GBPUSD', 'GOLD', 'NVDA', 'TSLA']
+odin-dashboard  | 2026-07-20T12:07:26.701008692Z INFO:     172.16.15.1:55692 - "GET /api/performance HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:07:26.759646207Z INFO:     172.16.15.1:55706 - "GET / HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:08:09.713236780Z INFO:     172.16.15.1:42134 - "GET /api/performance HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:08:17.815193442Z INFO:     172.16.15.1:62444 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:08:18.278267903Z INFO:     172.16.15.1:62444 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:17.745567273Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:18.272576472Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:21.594822866Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:22.075969051Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:26.592147841Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:27.212352699Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:31.646887855Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:32.202625593Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:36.679332829Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:37.195680021Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:41.669277680Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:42.396518796Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:46.675072128Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:47.211952160Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:51.622851708Z INFO:     172.16.15.1:62460 - "GET / HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:52.212498614Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:52.648412845Z INFO:     172.16.15.1:62460 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:52.972820277Z INFO:     172.16.15.1:62460 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:57.250039803Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:09:57.358754018Z INFO:     172.16.15.1:62471 - "GET /api/settings HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:01.144228489Z INFO:     172.16.15.1:62460 - "GET /api/performance HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:02.260516642Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:07.233601218Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:11.398268408Z INFO:     172.16.15.1:62476 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:11.455391366Z INFO:     172.16.15.1:62460 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:12.246592115Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:12.744304860Z INFO:     172.16.15.1:62476 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:12.753389737Z INFO:     172.16.15.1:62460 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:17.226129363Z INFO:     172.16.15.1:62460 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:17.695637082Z INFO:     172.16.15.1:62460 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:17.703606345Z INFO:     172.16.15.1:62476 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:22.240246018Z INFO:     172.16.15.1:62476 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:22.645172828Z INFO:     172.16.15.1:62460 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:22.665924141Z INFO:     172.16.15.1:62476 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:27.218415766Z INFO:     172.16.15.1:62476 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:27.573508691Z INFO:     172.16.15.1:62460 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:27.575019556Z INFO:     172.16.15.1:62476 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:32.225684482Z INFO:     172.16.15.1:62476 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:32.584834035Z INFO:     172.16.15.1:62460 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:32.588717896Z INFO:     172.16.15.1:62476 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:37.659373405Z INFO:     172.16.15.1:62476 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:37.996032988Z INFO:     172.16.15.1:62476 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:38.080466692Z INFO:     172.16.15.1:62490 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:42.695383799Z INFO:     172.16.15.1:62490 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:43.050476046Z INFO:     172.16.15.1:62490 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:43.143780778Z INFO:     172.16.15.1:62490 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:47.675606724Z INFO:     172.16.15.1:62490 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:48.043550839Z INFO:     172.16.15.1:62493 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:48.057284102Z INFO:     172.16.15.1:62490 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:52.704196193Z INFO:     172.16.15.1:62490 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:53.056712081Z INFO:     172.16.15.1:62493 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:53.058163379Z INFO:     172.16.15.1:62490 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:57.683255323Z INFO:     172.16.15.1:62490 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:58.087982676Z INFO:     172.16.15.1:62490 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:10:58.178184667Z INFO:     172.16.15.1:62490 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:02.687745567Z INFO:     172.16.15.1:62490 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:03.095198373Z INFO:     172.16.15.1:62490 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:03.098134200Z INFO:     172.16.15.1:62497 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:07.680824818Z INFO:     172.16.15.1:62497 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:08.096628768Z INFO:     172.16.15.1:62490 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:08.103420200Z INFO:     172.16.15.1:62497 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:12.737282723Z INFO:     172.16.15.1:62497 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:13.134936561Z INFO:     172.16.15.1:62497 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:13.235510232Z INFO:     172.16.15.1:62497 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:17.680678496Z INFO:     172.16.15.1:62497 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:18.060148637Z INFO:     172.16.15.1:62510 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:18.060431228Z INFO:     172.16.15.1:62497 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:22.680215320Z INFO:     172.16.15.1:62510 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:23.040482035Z INFO:     172.16.15.1:62497 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:23.046663256Z INFO:     172.16.15.1:62510 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:27.661747017Z INFO:     172.16.15.1:62510 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:28.062208757Z INFO:     172.16.15.1:62510 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:28.159029463Z INFO:     172.16.15.1:62510 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:32.663263846Z INFO:     172.16.15.1:62510 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:33.030005497Z INFO:     172.16.15.1:62516 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:11:33.036888212Z INFO:     172.16.15.1:62510 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:12:17.776380580Z INFO:     172.16.15.1:62531 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:12:18.297390587Z INFO:     172.16.15.1:62531 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:12:18.405367417Z INFO:     172.16.15.1:62532 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:13:17.774483343Z INFO:     172.16.15.1:62554 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:13:18.270099598Z INFO:     172.16.15.1:62554 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:13:18.340509415Z INFO:     172.16.15.1:62555 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:17.788841167Z INFO:     172.16.15.1:62582 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:18.248935409Z INFO:     172.16.15.1:62582 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:18.307252013Z INFO:     172.16.15.1:62584 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:39.924602581Z INFO:     172.16.15.1:62594 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:40.318555256Z INFO:     172.16.15.1:62594 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:40.376045635Z INFO:     172.16.15.1:62595 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:42.237150609Z INFO:     172.16.15.1:62595 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:42.648261150Z INFO:     172.16.15.1:62594 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:42.667404787Z INFO:     172.16.15.1:62595 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:47.231411923Z INFO:     172.16.15.1:62595 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:47.657196457Z INFO:     172.16.15.1:62594 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:47.680023047Z INFO:     172.16.15.1:62595 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:52.712714623Z INFO:     172.16.15.1:62595 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:53.106202475Z INFO:     172.16.15.1:62595 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:53.197158020Z INFO:     172.16.15.1:62600 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:57.697080504Z INFO:     172.16.15.1:62600 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:58.196917847Z INFO:     172.16.15.1:62600 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:14:58.286654207Z INFO:     172.16.15.1:62602 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:02.677532958Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:03.101063708Z INFO:     172.16.15.1:62600 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:03.111723229Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:07.688171496Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:08.089890807Z INFO:     172.16.15.1:62600 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:08.104959313Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:12.702601342Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:13.158745580Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:13.269248092Z INFO:     172.16.15.1:62602 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:17.659660179Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:18.119383457Z INFO:     172.16.15.1:62607 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:18.138125892Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:22.693070327Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:23.129963963Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:23.247650081Z INFO:     172.16.15.1:62602 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:27.648321294Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:27.985193888Z INFO:     172.16.15.1:62610 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:27.996808918Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:32.674263034Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:33.028965087Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:33.109355353Z INFO:     172.16.15.1:62602 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:37.694460697Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:38.024471790Z INFO:     172.16.15.1:62614 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:38.048769521Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:42.657234948Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:42.976611212Z INFO:     172.16.15.1:62614 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:42.987417004Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:47.708404572Z INFO:     172.16.15.1:62602 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:48.033733002Z INFO:     172.16.15.1:62602 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:15:48.127754241Z INFO:     172.16.15.1:62618 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:01.342440066Z INFO:     172.16.15.1:62623 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:01.750460749Z INFO:     172.16.15.1:62623 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:01.827179695Z INFO:     172.16.15.1:62624 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:02.202970616Z INFO:     172.16.15.1:62624 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:02.599361056Z INFO:     172.16.15.1:62623 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:02.606318774Z INFO:     172.16.15.1:62624 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:07.700481704Z INFO:     172.16.15.1:62624 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:08.183410023Z INFO:     172.16.15.1:62624 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:08.227315115Z INFO:     172.16.15.1:62630 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:12.699055315Z INFO:     172.16.15.1:62630 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:13.046148509Z INFO:     172.16.15.1:62624 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:13.073756779Z INFO:     172.16.15.1:62630 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:17.682568693Z INFO:     172.16.15.1:62630 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:18.024072696Z INFO:     172.16.15.1:62624 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:18.039919524Z INFO:     172.16.15.1:62630 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:19.328656373Z INFO:     172.16.15.1:57736 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:22.683075033Z INFO:     172.16.15.1:62630 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:22.700602858Z INFO:     172.16.15.1:57748 - "GET /api/performance HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:23.007375956Z INFO:     172.16.15.1:62630 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:23.015425714Z INFO:     172.16.15.1:62624 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:27.700531121Z INFO:     172.16.15.1:62624 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:28.143275601Z INFO:     172.16.15.1:62624 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:28.208509854Z INFO:     172.16.15.1:62641 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:32.705608756Z INFO:     172.16.15.1:62641 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:33.073093597Z INFO:     172.16.15.1:62624 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:33.079234824Z INFO:     172.16.15.1:62641 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:37.656525724Z INFO:     172.16.15.1:62641 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:38.023577686Z INFO:     172.16.15.1:62624 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:38.030473674Z INFO:     172.16.15.1:62641 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:42.674501388Z INFO:     172.16.15.1:62641 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:43.153584410Z INFO:     172.16.15.1:62641 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:43.247607401Z INFO:     172.16.15.1:62649 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:47.704616762Z INFO:     172.16.15.1:62649 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:48.109129747Z INFO:     172.16.15.1:62641 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:48.119389373Z INFO:     172.16.15.1:62649 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:52.679992067Z INFO:     172.16.15.1:62649 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:53.123209918Z INFO:     172.16.15.1:62641 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:53.132583845Z INFO:     172.16.15.1:62649 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:57.690209270Z INFO:     172.16.15.1:62649 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:58.072206924Z INFO:     172.16.15.1:62641 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:16:58.085011165Z INFO:     172.16.15.1:62649 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:17:02.651380772Z INFO:     172.16.15.1:62641 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:17:03.040059505Z INFO:     172.16.15.1:62649 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:17:03.044159757Z INFO:     172.16.15.1:62641 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:17:17.769720854Z INFO:     172.16.15.1:62660 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:17:18.186647027Z INFO:     172.16.15.1:62660 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:17:18.256147285Z INFO:     172.16.15.1:62661 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:17.753464329Z INFO:     172.16.15.1:62673 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:18.123451675Z INFO:     172.16.15.1:62673 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:18.188368301Z INFO:     172.16.15.1:62674 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:24.382278868Z INFO:     172.16.15.1:62677 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:24.752762878Z INFO:     172.16.15.1:62677 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:24.852460775Z INFO:     172.16.15.1:62678 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:27.677792678Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:28.150519205Z INFO:     172.16.15.1:62677 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:28.174933670Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:32.663875429Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:33.149610685Z INFO:     172.16.15.1:62677 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:33.177143244Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:37.601826779Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:38.086074649Z INFO:     172.16.15.1:62677 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:38.112660161Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:42.679994203Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:43.084648921Z INFO:     172.16.15.1:62677 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:43.092009178Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:47.709463459Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:48.098479498Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:48.187142614Z INFO:     172.16.15.1:62678 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:52.225504964Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:52.632470888Z INFO:     172.16.15.1:62691 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:52.655678998Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:54.047761460Z INFO:     172.16.15.1:62678 - "GET /api/performance HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:56.277837733Z INFO:     172.16.15.1:62678 - "GET /api/performance HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:57.212051430Z INFO:     172.16.15.1:62678 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:18:59.400243603Z INFO:     172.16.15.1:62678 - "GET /api/signals HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:01.275669893Z INFO:     172.16.15.1:62678 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:01.359768743Z INFO:     172.16.15.1:62696 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:02.202388381Z INFO:     172.16.15.1:62696 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:02.511295412Z INFO:     172.16.15.1:62678 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:02.518530049Z INFO:     172.16.15.1:62696 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:07.197271092Z INFO:     172.16.15.1:62696 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:07.513668704Z INFO:     172.16.15.1:62696 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:07.611561329Z INFO:     172.16.15.1:62696 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:12.214162023Z INFO:     172.16.15.1:62696 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:12.536168507Z INFO:     172.16.15.1:62697 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:12.546556479Z INFO:     172.16.15.1:62696 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:17.227382573Z INFO:     172.16.15.1:62696 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:17.571457578Z INFO:     172.16.15.1:62696 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:17.656370672Z INFO:     172.16.15.1:62696 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:22.650604981Z INFO:     172.16.15.1:62696 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:23.048453651Z INFO:     172.16.15.1:62702 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:23.073497573Z INFO:     172.16.15.1:62696 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:28.585960799Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:29.237248367Z INFO:     172.16.15.1:62705 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:30.014652335Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:32.690318537Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:33.048811790Z INFO:     172.16.15.1:62705 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:33.056778784Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:37.664907535Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:38.006170571Z INFO:     172.16.15.1:62705 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:38.027904135Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:42.679654092Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:43.079706325Z INFO:     172.16.15.1:62708 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:43.085948428Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:47.665854453Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:48.090468931Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:48.183278444Z INFO:     172.16.15.1:62706 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:52.666616248Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:53.068982700Z INFO:     172.16.15.1:62712 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:53.097868922Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:57.684150806Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:58.098856187Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:58.187772905Z INFO:     172.16.15.1:62706 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:59.116768556Z INFO:     172.16.15.1:53613 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+odin-dashboard  | 2026-07-20T12:19:59.199682116Z INFO:     172.16.15.1:62229 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:59.641693407Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:19:59.889361876Z INFO:     172.16.15.1:62229 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:02.664706183Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:03.066796753Z INFO:     172.16.15.1:62714 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:03.069121192Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:04.137829336Z INFO:     172.16.15.1:62229 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:04.515861015Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:04.730190414Z INFO:     172.16.15.1:62229 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:07.718611688Z INFO:     172.16.15.1:62706 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:08.135524170Z INFO:     172.16.15.1:62706 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:08.215911662Z INFO:     172.16.15.1:62717 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:09.161701206Z INFO:     172.16.15.1:62229 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:09.620547922Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:09.814741369Z INFO:     172.16.15.1:62229 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:12.669338409Z INFO:     172.16.15.1:62717 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:13.053850452Z INFO:     172.16.15.1:62706 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:13.084263020Z INFO:     172.16.15.1:62717 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:14.135336250Z INFO:     172.16.15.1:62229 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:14.598234945Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:14.823679554Z INFO:     172.16.15.1:62229 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:17.728220379Z INFO:     172.16.15.1:62717 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:17.737368749Z INFO:     172.16.15.1:62229 - "GET /api/signals HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:18.187981617Z INFO:     172.16.15.1:62717 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:18.256302687Z INFO:     172.16.15.1:62720 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:19.133291362Z INFO:     172.16.15.1:62229 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:19.400192997Z INFO:     172.16.15.1:62231 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:19.418991623Z INFO:     172.16.15.1:62230 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:19.551510893Z INFO:     172.16.15.1:62230 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:19.556717940Z INFO:     172.16.15.1:62231 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:22.032370052Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:22.326457793Z INFO:     172.16.15.1:62230 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:24.113971672Z INFO:     172.16.15.1:62231 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:24.567598403Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:24.870428048Z INFO:     172.16.15.1:62230 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:25.386285461Z INFO:     172.16.15.1:62722 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:25.762542216Z INFO:     172.16.15.1:62722 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:25.830173533Z INFO:     172.16.15.1:62723 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:27.662484287Z INFO:     172.16.15.1:62723 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:27.995464831Z INFO:     172.16.15.1:62723 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:28.003935721Z INFO:     172.16.15.1:62722 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:29.118148557Z INFO:     172.16.15.1:62231 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:29.553533292Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:29.825139022Z INFO:     172.16.15.1:62230 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:32.668182218Z INFO:     172.16.15.1:62722 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:32.984525570Z INFO:     172.16.15.1:62722 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:32.987786229Z INFO:     172.16.15.1:62723 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:34.154385662Z INFO:     172.16.15.1:62231 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:34.534547161Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:34.851700377Z INFO:     172.16.15.1:62230 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:37.715621982Z INFO:     172.16.15.1:62723 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:38.106710378Z INFO:     172.16.15.1:62723 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:38.160059196Z INFO:     172.16.15.1:62732 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:39.164078196Z INFO:     172.16.15.1:62231 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:39.545189846Z INFO:     172.16.15.1:62229 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:39.831068276Z INFO:     172.16.15.1:62230 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:42.754503418Z INFO:     172.16.15.1:62732 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:43.135091932Z INFO:     172.16.15.1:62732 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:43.235033768Z INFO:     172.16.15.1:62732 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:44.184553852Z INFO:     172.16.15.1:62231 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:45.012554140Z INFO:     172.16.15.1:62231 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:45.270846522Z INFO:     172.16.15.1:62231 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:47.707652392Z INFO:     172.16.15.1:62732 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:48.098905675Z INFO:     172.16.15.1:62735 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:48.098958570Z INFO:     172.16.15.1:62732 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:49.235578202Z INFO:     172.16.15.1:62231 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:49.711074845Z INFO:     172.16.15.1:62231 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:50.082105155Z INFO:     172.16.15.1:62231 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:52.696150840Z INFO:     172.16.15.1:62735 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:53.083031497Z INFO:     172.16.15.1:62735 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:53.098514358Z INFO:     172.16.15.1:62732 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:55.377674813Z INFO:     172.16.15.1:62232 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:55.833776818Z INFO:     172.16.15.1:62232 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:56.108225186Z INFO:     172.16.15.1:62232 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:57.683891219Z INFO:     172.16.15.1:62732 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:58.047092468Z INFO:     172.16.15.1:62735 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:20:58.052029000Z INFO:     172.16.15.1:62732 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:01.392018072Z INFO:     172.16.15.1:62233 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:01.840819579Z INFO:     172.16.15.1:62233 - "GET /api/equity HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:02.116194076Z INFO:     172.16.15.1:62233 - "GET /api/strategies HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:02.689644280Z INFO:     172.16.15.1:62732 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:03.046749283Z INFO:     172.16.15.1:62732 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:03.050085643Z INFO:     172.16.15.1:62735 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:07.685885016Z INFO:     172.16.15.1:62735 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:08.142510210Z INFO:     172.16.15.1:62735 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:08.197817994Z INFO:     172.16.15.1:62745 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:12.712585388Z INFO:     172.16.15.1:62745 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:13.038375410Z INFO:     172.16.15.1:62735 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:13.048015597Z INFO:     172.16.15.1:62745 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:17.720337287Z INFO:     172.16.15.1:62745 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:18.145345816Z INFO:     172.16.15.1:62745 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:18.207881684Z INFO:     172.16.15.1:62752 - "GET /api/trades HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:22.685050143Z INFO:     172.16.15.1:62752 - "GET /api/status HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:23.034199814Z INFO:     172.16.15.1:62752 - "GET /api/telemetry HTTP/1.1" 200 OK
+odin-dashboard  | 2026-07-20T12:21:23.036671913Z INFO:     172.16.15.1:62745 - "GET /api/trades HTTP/1.1" 200 OK
